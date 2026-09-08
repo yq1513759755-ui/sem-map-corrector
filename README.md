@@ -1,5 +1,7 @@
 # SEM Map Corrector
 
+[![CI](https://github.com/yq1513759755-ui/sem-map-corrector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yq1513759755-ui/sem-map-corrector/actions/workflows/ci.yml)
+
 实验室共享的 Zeiss SE2 SEM 十字标记定位与几何畸变校正工具。
 
 本项目只维护旧版 **SE2 实心亮十字** 算法，不包含 InLens 浮雕风格的
