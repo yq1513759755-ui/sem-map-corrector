@@ -10,13 +10,13 @@
 在 macOS 或 Linux 终端执行：
 
 ```bash
-git clone --depth 1 https://github.com/yq1513759755-ui/Kitave-Chain.git sem-map-corrector && cd sem-map-corrector && ./semcorr --help
+git clone --depth 1 https://github.com/yq1513759755-ui/sem-map-corrector.git && cd sem-map-corrector && ./semcorr --help
 ```
 
 在 Windows PowerShell 或 CMD 中执行：
 
 ```powershell
-git clone --depth 1 https://github.com/yq1513759755-ui/Kitave-Chain.git sem-map-corrector
+git clone --depth 1 https://github.com/yq1513759755-ui/sem-map-corrector.git
 cd sem-map-corrector
 .\semcorr.cmd --help
 ```
@@ -97,6 +97,13 @@ semcorr image.tif --grid 2x3
 
 输出包括校正 TIFF、中心坐标 CSV、中心标注图、检测图、残差图与 JSON
 报告。程序不会修改输入图像。
+
+## Jupyter 交互版
+
+不想用命令行的用户可以打开 `semcorr_notebook.ipynb`：与 CLI 完全等价
+（同一个 `semcorr.correct_image()` API），四张诊断图内联显示、报告摘要
+直接成表、支持批量处理。改第 1 节参数后 Run All 即可；内核需要
+`numpy / opencv-python-headless / matplotlib`。
 
 ## 结果解释
 

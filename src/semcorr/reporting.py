@@ -7,11 +7,8 @@ import os
 from pathlib import Path
 
 import cv2
-import matplotlib
 import numpy as np
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 from .io import write_image
 
@@ -26,67 +23,62 @@ def write_diagnostics(*, outdir, base, gray, names, ordered, ideal,
     small = cv2.resize(gray, None, fx=small_scale, fy=small_scale,
                        interpolation=cv2.INTER_AREA)
 
-    fig1, ax1 = plt.subplots(
-        figsize=(12, 12 * small.shape[0] / small.shape[1]))
-    try:
-        ax1.imshow(small, cmap="gray")
-        for i, name in enumerate(names):
-            x = ordered[i][0] * small_scale
-            y = ordered[i][1] * small_scale
-            ax1.plot(x, y, "o", mec="lime", mfc="none", ms=14, mew=1.5)
-            ax1.annotate(name, (x, y), textcoords="offset points",
-                         xytext=(10, 10), color="lime", fontsize=11)
-        for candidate in rejected:
-            ax1.plot(candidate["cx"] * small_scale,
-                     candidate["cy"] * small_scale, "rx", ms=10, mew=2)
-        ax1.set_title("Detected (green) / rejected (red)")
-        ax1.axis("off")
-        fig1.tight_layout()
-        detection_path = diag_dir / f"{base}_detection.png"
-        fig1.savefig(detection_path, dpi=150)
-    finally:
-        plt.close(fig1)
+    fig1 = Figure(figsize=(12, 12 * small.shape[0] / small.shape[1]))
+    ax1 = fig1.subplots()
+    ax1.imshow(small, cmap="gray")
+    for i, name in enumerate(names):
+        x = ordered[i][0] * small_scale
+        y = ordered[i][1] * small_scale
+        ax1.plot(x, y, "o", mec="lime", mfc="none", ms=14, mew=1.5)
+        ax1.annotate(name, (x, y), textcoords="offset points",
+                     xytext=(10, 10), color="lime", fontsize=11)
+    for candidate in rejected:
+        ax1.plot(candidate["cx"] * small_scale,
+                 candidate["cy"] * small_scale, "rx", ms=10, mew=2)
+    ax1.set_title("Detected (green) / rejected (red)")
+    ax1.axis("off")
+    fig1.tight_layout()
+    detection_path = diag_dir / f"{base}_detection.png"
+    fig1.savefig(detection_path, dpi=150)
 
-    fig2, (ax2a, ax2b) = plt.subplots(1, 2, figsize=(14, 6))
-    try:
-        ax2a.imshow(small, cmap="gray")
-        quiver_scale = 20.0
-        suspect_ids = set(loo["suspects"])
-        for i, name in enumerate(names):
-            x = ordered[i][0] * small_scale
-            y = ordered[i][1] * small_scale
-            ax2a.plot(x, y, "o", mec="lime", mfc="none", ms=10, mew=1.2)
-            ax2a.annotate(name, (x, y), textcoords="offset points",
-                          xytext=(8, 8), color="lime", fontsize=10)
-            ax2a.arrow(
-                x, y,
-                resid_used[i][0] * quiver_scale * small_scale,
-                resid_used[i][1] * quiver_scale * small_scale,
-                color="red", width=1.2, head_width=5,
-            )
-            if name in suspect_ids:
-                ax2a.plot(x, y, "o", mec="darkorange", mfc="none",
-                          ms=22, mew=2.2)
-        ax2a.set_title(f"Residual vectors (x{quiver_scale:.0f})")
-        ax2a.axis("off")
+    fig2 = Figure(figsize=(14, 6))
+    ax2a, ax2b = fig2.subplots(1, 2)
+    ax2a.imshow(small, cmap="gray")
+    quiver_scale = 20.0
+    suspect_ids = set(loo["suspects"])
+    for i, name in enumerate(names):
+        x = ordered[i][0] * small_scale
+        y = ordered[i][1] * small_scale
+        ax2a.plot(x, y, "o", mec="lime", mfc="none", ms=10, mew=1.2)
+        ax2a.annotate(name, (x, y), textcoords="offset points",
+                      xytext=(8, 8), color="lime", fontsize=10)
+        ax2a.arrow(
+            x, y,
+            resid_used[i][0] * quiver_scale * small_scale,
+            resid_used[i][1] * quiver_scale * small_scale,
+            color="red", width=1.2, head_width=5,
+        )
+        if name in suspect_ids:
+            ax2a.plot(x, y, "o", mec="darkorange", mfc="none",
+                      ms=22, mew=2.2)
+    ax2a.set_title(f"Residual vectors (x{quiver_scale:.0f})")
+    ax2a.axis("off")
 
-        magnitudes = np.linalg.norm(resid_used, axis=1)
-        colors = ["darkorange" if name in suspect_ids else "steelblue"
-                  for name in names]
-        ax2b.bar(names, magnitudes, color=colors)
-        ax2b.set_ylabel("Residual (px)")
-        title = f"Per-mark residual  (RMS = {rms_used:.3f} px)"
-        if len(names) < (4 if affine else 5):
-            title += "  [no redundancy - round-off only, see self-check]"
-        elif suspect_ids:
-            title += "  orange = LOO-suspect"
-        ax2b.set_title(title)
-        ax2b.grid(axis="y", alpha=0.3)
-        fig2.tight_layout()
-        residual_path = diag_dir / f"{base}_residuals.png"
-        fig2.savefig(residual_path, dpi=150)
-    finally:
-        plt.close(fig2)
+    magnitudes = np.linalg.norm(resid_used, axis=1)
+    colors = ["darkorange" if name in suspect_ids else "steelblue"
+              for name in names]
+    ax2b.bar(names, magnitudes, color=colors)
+    ax2b.set_ylabel("Residual (px)")
+    title = f"Per-mark residual  (RMS = {rms_used:.3f} px)"
+    if len(names) < (4 if affine else 5):
+        title += "  [no redundancy - round-off only, see self-check]"
+    elif suspect_ids:
+        title += "  orange = LOO-suspect"
+    ax2b.set_title(title)
+    ax2b.grid(axis="y", alpha=0.3)
+    fig2.tight_layout()
+    residual_path = diag_dir / f"{base}_residuals.png"
+    fig2.savefig(residual_path, dpi=150)
 
     centers_csv = diag_dir / f"{base}_centers.csv"
     with centers_csv.open("w", encoding="utf-8") as handle:
@@ -126,7 +118,9 @@ def write_report(*, outdir, base, report):
     return os.fspath(path)
 
 
-def print_outputs(outputs):
+def print_outputs(outputs, verbose=True):
+    if not verbose:
+        return
     print("\n输出：")
     print("  校正图   : %s" % outputs["corrected_image"])
     print("  定位诊断 : %s" % outputs["detection_overlay"])

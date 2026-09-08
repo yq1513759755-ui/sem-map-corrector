@@ -297,7 +297,7 @@ def _split_rows(cands, n_rows):
             for g in np.split(np.arange(len(pts)), cuts)]
 
 
-def recover_missing(accepted, n_rows, n_cols, image):
+def recover_missing(accepted, n_rows, n_cols, image, verbose=True):
     """网格不完整时：枚举"缺哪个格位"的所有假设。对每个假设：
     按行切分检测点并与该行剩余格位按 x 顺序配对，拟合 格点→像素 仿射，
     预测缺失位置，再在预测点局部重搜模板。均匀网格缺角时存在多个近似
@@ -313,7 +313,8 @@ def recover_missing(accepted, n_rows, n_cols, image):
     H, W = image.shape
     rows = _split_rows(accepted, n_rows)
     if len(rows) != n_rows:
-        print("警告：缺失标记恢复失败（行切分异常）")
+        if verbose:
+            print("警告：缺失标记恢复失败（行切分异常）")
         return None
 
     best = None  # (score, cand, missing_index, fit_rms)
@@ -342,13 +343,15 @@ def recover_missing(accepted, n_rows, n_cols, image):
                 "score": None, "rx": None, "ry": None}
         x, y, score = refine_center(image, cand)
         cand["rx"], cand["ry"], cand["score"] = x, y, score
-        print("  假设缺 M%d：指派RMS=%.2f px，预测 (%.1f, %.1f)，模板=%.3f" %
-              (m + 1, rms, x, y, score))
+        if verbose:
+            print("  假设缺 M%d：指派RMS=%.2f px，预测 (%.1f, %.1f)，模板=%.3f" %
+                  (m + 1, rms, x, y, score))
         if best is None or score > best[0]:
             best = (score, cand, m, rms)
 
     if best is None:
-        print("警告：缺失标记恢复失败（没有通过检验的格位指派）")
+        if verbose:
+            print("警告：缺失标记恢复失败（没有通过检验的格位指派）")
         return None
     score, cand, m, rms = best
     cand["sym"] = symmetry_score(image, cand["rx"], cand["ry"], span_guess)
@@ -357,10 +360,12 @@ def recover_missing(accepted, n_rows, n_cols, image):
     cand["combined"] = 0.5 * score + 0.5 * max(0.0, cand["sym"])
     cand["recovered"] = True
     if score < RECOVER_SCORE or cand["shape"] < ARM_CONTRAST_MIN:
-        print("警告：最佳假设（缺 M%d）预测位置模板=%.3f 形状=%.3f，"
-              "未达门槛（模板 %.2f / 形状 %.2f），恢复失败——"
-              "该位置可能确实没有标记" %
-              (m + 1, score, cand["shape"], RECOVER_SCORE, ARM_CONTRAST_MIN))
+        if verbose:
+            print("警告：最佳假设（缺 M%d）预测位置模板=%.3f 形状=%.3f，"
+                  "未达门槛（模板 %.2f / 形状 %.2f），恢复失败——"
+                  "该位置可能确实没有标记" %
+                  (m + 1, score, cand["shape"], RECOVER_SCORE, ARM_CONTRAST_MIN))
         return None
-    print("采纳假设：缺 M%d，恢复位置 (%.1f, %.1f)" % (m + 1, cand["rx"], cand["ry"]))
+    if verbose:
+        print("采纳假设：缺 M%d，恢复位置 (%.1f, %.1f)" % (m + 1, cand["rx"], cand["ry"]))
     return cand

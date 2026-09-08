@@ -221,7 +221,7 @@ class Grid2x2Tests(unittest.TestCase):
         outdir = tmpdir / "out"
         args = argparse.Namespace(image=str(scene), design=None,
                                   grid="2x2", outdir=str(outdir),
-                                  affine=False, diagnostics=True)
+                                  affine=False)
         mdc.process_single(str(scene), args, outdir=str(outdir))
         with open(outdir / "diagnostics" / "grid22_report.json") as handle:
             report = json.load(handle)
@@ -342,7 +342,7 @@ class GridSelfHealTests(unittest.TestCase):
         outdir = tmpdir / "out"
         args = argparse.Namespace(image=str(scene), design=None,
                                   grid="2x3", outdir=str(outdir),
-                                  affine=False, diagnostics=True)
+                                  affine=False)
         mdc.process_single(str(scene), args, outdir=str(outdir))
         with open(outdir / "diagnostics" / "selfheal_report.json") as handle:
             report = json.load(handle)
