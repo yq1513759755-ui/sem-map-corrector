@@ -223,7 +223,8 @@ class Grid2x2Tests(unittest.TestCase):
                                   grid="2x2", outdir=str(outdir),
                                   affine=False)
         mdc.process_single(str(scene), args, outdir=str(outdir))
-        with open(outdir / "diagnostics" / "grid22_report.json") as handle:
+        with open(outdir / "diagnostics" / "grid22_report.json",
+                  encoding="utf-8") as handle:
             report = json.load(handle)
         self.assertEqual(report["method"], "exact-square")
         self.assertEqual(len(report["exact_square_cells"]), 1)
@@ -344,7 +345,8 @@ class GridSelfHealTests(unittest.TestCase):
                                   grid="2x3", outdir=str(outdir),
                                   affine=False)
         mdc.process_single(str(scene), args, outdir=str(outdir))
-        with open(outdir / "diagnostics" / "selfheal_report.json") as handle:
+        with open(outdir / "diagnostics" / "selfheal_report.json",
+                  encoding="utf-8") as handle:
             report = json.load(handle)
         # 必须触发自愈：逐出挤位的圆斑，按几何预测找回被污染的 M5
         self.assertTrue(report["repair"], "未触发网格自愈")
