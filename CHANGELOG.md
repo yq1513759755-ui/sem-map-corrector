@@ -20,3 +20,4 @@
 - `semcorr_notebook.ipynb` 重写为精简版：环境自检、参数、静默运行、
   结果图、报告摘要、批量处理六个使用节。
 - `correct_image()` 移除从未读取的 `diagnostics` 死参数。
+- 移除 `legacy/` 冻结目录（旧版单文件程序仅保留在 git 历史中）。
