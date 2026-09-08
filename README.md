@@ -10,13 +10,13 @@
 在 macOS 或 Linux 终端执行：
 
 ```bash
-git clone --depth 1 https://github.com/yq1513759755-ui/Kitaev-Chain-Lab.git sem-map-corrector && cd sem-map-corrector && ./semcorr --help
+git clone --depth 1 https://github.com/yq1513759755-ui/Kitave-Chain.git sem-map-corrector && cd sem-map-corrector && ./semcorr --help
 ```
 
 在 Windows PowerShell 或 CMD 中执行：
 
 ```powershell
-git clone --depth 1 https://github.com/yq1513759755-ui/Kitaev-Chain-Lab.git sem-map-corrector
+git clone --depth 1 https://github.com/yq1513759755-ui/Kitave-Chain.git sem-map-corrector
 cd sem-map-corrector
 .\semcorr.cmd --help
 ```
