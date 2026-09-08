@@ -97,6 +97,31 @@ semcorr --batch image_folder
 semcorr image.tif --grid 2x3
 ```
 
+### 设计坐标（可选，`--design`）
+
+默认从检测点推断**正方形**网格（间距 = 全部行列间距的中位数）。若版图
+的 mark 间距不是正方形，或需要以设计坐标系（如 µm）表达理想坐标，
+传入 `--design`：
+
+```bash
+semcorr image.tif --design design.json
+```
+
+`design.json` 格式——键为 mark 编号 `M1..Mn`（行优先，与输出报告一致），
+值为该 mark 的设计坐标 `[x, y]`，缺少任何键会报错：
+
+```json
+{
+  "M1": [0.0, 0.0],
+  "M2": [200.0, 0.0],
+  "M3": [0.0, 200.0],
+  "M4": [200.0, 200.0]
+}
+```
+
+此后报告与 `diagnostics/*_centers.csv` 中的理想坐标、残差均以设计单位
+表示。
+
 输出包括校正 TIFF、中心坐标 CSV、中心标注图、检测图、残差图与 JSON
 报告。程序不会修改输入图像。
 

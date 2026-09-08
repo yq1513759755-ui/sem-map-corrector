@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sem-map-corrector"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Laboratory tool for SE2 SEM cross-mark localization and distortion correction"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26,<3",
@@ -22,6 +23,9 @@ semcorr = "semcorr.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "semcorr.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

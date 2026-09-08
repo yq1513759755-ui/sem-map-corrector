@@ -21,3 +21,5 @@
   结果图、报告摘要、批量处理六个使用节。
 - `correct_image()` 移除从未读取的 `diagnostics` 死参数。
 - 移除 `legacy/` 冻结目录（旧版单文件程序仅保留在 git 历史中）。
+- 增加 MIT LICENSE；CI 矩阵加入 Windows；README 补充 `--design`
+  JSON 格式说明；包版本改为从 `semcorr.__version__` 动态读取。
