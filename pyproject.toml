@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sem-map-corrector"
+version = "0.1.0"
+description = "Laboratory tool for SE2 SEM cross-mark localization and distortion correction"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26,<3",
+  "opencv-python-headless>=4.9,<6",
+  "matplotlib>=3.8,<4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+semcorr = "semcorr.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

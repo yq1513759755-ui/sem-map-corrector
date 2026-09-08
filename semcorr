@@ -1,0 +1,44 @@
+#!/bin/sh
+# One-command laboratory launcher. The first run creates an isolated Python
+# environment beside this script; later runs reuse it.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ENV_DIR="$SCRIPT_DIR/.venv"
+ENV_PYTHON="$ENV_DIR/bin/python"
+
+if [ ! -x "$ENV_PYTHON" ]; then
+    if [ -n "${SEMCORR_PYTHON:-}" ]; then
+        BOOTSTRAP_PYTHON="$SEMCORR_PYTHON"
+    elif command -v python3 >/dev/null 2>&1; then
+        BOOTSTRAP_PYTHON=$(command -v python3)
+    elif command -v python >/dev/null 2>&1; then
+        BOOTSTRAP_PYTHON=$(command -v python)
+    else
+        echo "错误：未找到 Python 3.11 或更高版本。" >&2
+        exit 1
+    fi
+
+    "$BOOTSTRAP_PYTHON" -c \
+        'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+        || {
+            echo "错误：需要 Python 3.11 或更高版本。" >&2
+            exit 1
+        }
+
+    echo "首次运行：正在创建 SEM Corrector 独立环境……"
+    "$BOOTSTRAP_PYTHON" -m venv --system-site-packages "$ENV_DIR"
+fi
+
+if ! "$ENV_PYTHON" -c 'import cv2, matplotlib, numpy' >/dev/null 2>&1; then
+    echo "正在安装 NumPy、OpenCV 与 Matplotlib……"
+    "$ENV_PYTHON" -m pip install --disable-pip-version-check \
+        'numpy>=1.26,<3' 'opencv-python-headless>=4.9,<6' 'matplotlib>=3.8,<4'
+fi
+
+mkdir -p "$ENV_DIR/.matplotlib" "$ENV_DIR/.cache"
+export MPLCONFIGDIR="$ENV_DIR/.matplotlib"
+export XDG_CACHE_HOME="$ENV_DIR/.cache"
+export PYTHONPATH="$SCRIPT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "$ENV_PYTHON" -m semcorr "$@"
