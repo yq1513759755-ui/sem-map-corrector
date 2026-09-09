@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- 移除 Windows 启动器 `semcorr.cmd` 与 CI 的 Windows 矩阵（实验室使用
+  场景为 macOS + Jupyter；库代码保持跨平台，文件读写仍显式 UTF-8）。
+
 ## 0.1.0
 
 - 冻结原始 SE2 单文件程序。

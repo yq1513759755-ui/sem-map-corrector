@@ -15,14 +15,6 @@
 git clone --depth 1 https://github.com/yq1513759755-ui/sem-map-corrector.git && cd sem-map-corrector && ./semcorr --help
 ```
 
-在 Windows PowerShell 或 CMD 中执行：
-
-```powershell
-git clone --depth 1 https://github.com/yq1513759755-ui/sem-map-corrector.git
-cd sem-map-corrector
-.\semcorr.cmd --help
-```
-
 下载后处理单张图像：
 
 ```bash
@@ -34,13 +26,6 @@ cd sem-map-corrector
 
 ```bash
 ./semcorr --batch "/path/to/image_folder"
-```
-
-Windows 单张与批量处理：
-
-```powershell
-.\semcorr.cmd "C:\path\to\image.tif"
-.\semcorr.cmd --batch "C:\path\to\image_folder"
 ```
 
 ## 最简单的调用方式
@@ -59,9 +44,6 @@ Python 环境。如果实验室已有指定的 Python/Conda，首次运行建议
 ```bash
 SEMCORR_PYTHON=/path/to/python ./semcorr image.tif
 ```
-
-Windows 可用 `set SEMCORR_PYTHON=C:\path\to\python.exe`（CMD）或
-`$env:SEMCORR_PYTHON='C:\path\to\python.exe'`（PowerShell）指定 Python。
 
 ## 标准安装
 
