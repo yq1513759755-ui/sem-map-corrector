@@ -1,6 +1,6 @@
 """SE2 SEM mark localization and distortion correction."""
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = ["correct_image", "make_demo_image"]
 
 

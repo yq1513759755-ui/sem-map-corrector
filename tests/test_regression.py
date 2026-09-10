@@ -10,7 +10,9 @@ subpixel_peak 等纯函数。
     python -m unittest tests.test_regression -v
     python -m pytest tests/test_regression.py -q
 """
+import argparse
 import math
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -453,6 +455,258 @@ class RobustRefineTests(unittest.TestCase):
                                           100.0, 100.0, 60.0, 0.2)
         self.assertLess(math.hypot(rx - 100, ry - 100), 0.1)
         self.assertGreater(score, 0.95)
+
+
+class BrokenMarkDiagnosticsTests(unittest.TestCase):
+    """mark 十字残缺时的失败归因：错误信息必须指向"十字本身不完整"，
+    并落一张 *_detection_failed.png，而不是建议改 --grid。"""
+
+    @staticmethod
+    def _four_marks(damage_index=None):
+        img = np.full((500, 500), 50, np.uint8)
+        pts = [(120.0, 120.0), (380.0, 120.0), (120.0, 380.0), (380.0, 380.0)]
+        for i, (x, y) in enumerate(pts):
+            if i == damage_index:
+                img[int(y) - 10:int(y) + 10, int(x) - 10:int(x) + 10] = 210
+            else:
+                draw_cross(img, x, y)
+        return img, pts
+
+    def test_broken_cross_message_points_at_the_mark(self):
+        img, pts = self._four_marks(damage_index=3)
+        tmpdir = Path(tempfile.mkdtemp())
+        scene = tmpdir / "broken.png"
+        cv2.imwrite(str(scene), img)
+        outdir = tmpdir / "out"
+        args = argparse.Namespace(image=str(scene), design=None, grid="2x2",
+                                  outdir=str(outdir), affine=False)
+        with self.assertRaises(RuntimeError) as ctx:
+            mdc.process_single(str(scene), args, outdir=str(outdir),
+                               verbose=False)
+        msg = str(ctx.exception)
+        self.assertIn("十字", msg,
+                      "失败信息应提示十字形状可能不完整")
+        self.assertIn("缺的是 M4", msg,
+                      "失败信息应指出缺失的格位")
+        self.assertNotIn("--grid 2x3", msg,
+                         "2x2 场景不应再建议改用 2x3 网格")
+        self.assertNotIn("请用 --grid 行x列", msg)
+        overlay = outdir / "diagnostics" / "broken_detection_failed.png"
+        self.assertTrue(overlay.exists(), "缺少失败诊断图 %s" % overlay)
+
+    def test_complete_mark_set_still_succeeds(self):
+        """对照：四个十字都完整时不应被误判为残缺。"""
+        img, _ = self._four_marks(damage_index=None)
+        tmpdir = Path(tempfile.mkdtemp())
+        scene = tmpdir / "full.png"
+        cv2.imwrite(str(scene), img)
+        outdir = tmpdir / "out"
+        args = argparse.Namespace(image=str(scene), design=None, grid="2x2",
+                                  outdir=str(outdir), affine=False)
+        report = mdc.process_single(str(scene), args, outdir=str(outdir),
+                                    verbose=False)
+        self.assertEqual(report["self_check"]["n_detected"], 4)
+
+
+class CorrectedCenterAnnotationTests(unittest.TestCase):
+    """校正图上的红色小十字中心标记（就地画进 _corrected.tif）+ 校正后坐标 CSV。"""
+
+    def test_corrected_image_carries_marks_and_csv(self):
+        img, _ = BrokenMarkDiagnosticsTests._four_marks(damage_index=None)
+        tmpdir = Path(tempfile.mkdtemp())
+        scene = tmpdir / "four.png"
+        cv2.imwrite(str(scene), img)
+        outdir = tmpdir / "out"
+        args = argparse.Namespace(image=str(scene), design=None, grid="2x2",
+                                  outdir=str(outdir), affine=False)
+        report = mdc.process_single(str(scene), args, outdir=str(outdir),
+                                    verbose=False)
+
+        self.assertEqual(report["schema_version"], 2)
+        self.assertIn("corrected_centers", report)
+        points = report["corrected_centers"]["points"]
+        self.assertEqual([p["id"] for p in points], ["M1", "M2", "M3", "M4"])
+
+        corrected = Path(report["outputs"]["corrected_image"])
+        self.assertEqual(corrected.name, "four_corrected.tif",
+                         "标记应直接画进校正图本身")
+        canvas = cv2.imread(str(corrected))
+        self.assertIsNotNone(canvas, "校正图无法读回")
+        for p in points:
+            xi, yi = int(round(p["x"])), int(round(p["y"]))
+            win = 60
+            y0, y1 = max(0, yi - win), min(canvas.shape[0], yi + win)
+            x0, x1 = max(0, xi - win), min(canvas.shape[1], xi + win)
+            local = canvas[y0:y1, x0:x1]
+            mask = ((local[:, :, 2] > 180) & (local[:, :, 0] < 80)
+                    & (local[:, :, 1] < 80))
+            self.assertGreaterEqual(int(mask.sum()), 5,
+                                    "%s 中心附近缺少红色标记" % p["id"])
+            ys, xs = np.nonzero(mask)
+            reach = int(max(np.abs(ys + y0 - yi).max(),
+                            np.abs(xs + x0 - xi).max()))
+            self.assertLessEqual(reach, 6,
+                                 "%s 的标记过大：离中心 %d px（应是很小的十字）"
+                                 % (p["id"], reach))
+
+        csv_path = Path(report["outputs"]["centers_corrected_csv"])
+        self.assertTrue(csv_path.exists(), "缺少校正后坐标 CSV")
+        rows = csv_path.read_text(encoding="utf-8").strip().splitlines()
+        self.assertEqual(rows[0], "id,x,y,source,unit")
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all("self-check" in row for row in rows[1:]))
+
+    def test_mark_arm_flag_overrides_size(self):
+        """--mark-arm N 用绝对像素覆盖自适应尺寸。"""
+        img, _ = BrokenMarkDiagnosticsTests._four_marks(damage_index=None)
+        tmpdir = Path(tempfile.mkdtemp())
+        scene = tmpdir / "four.png"
+        cv2.imwrite(str(scene), img)
+        outdir = tmpdir / "out"
+        args = argparse.Namespace(image=str(scene), design=None, grid="2x2",
+                                  outdir=str(outdir), affine=False,
+                                  mark_arm=10)
+        report = mdc.process_single(str(scene), args, outdir=str(outdir),
+                                    verbose=False)
+        canvas = cv2.imread(report["outputs"]["corrected_image"])
+        for p in report["corrected_centers"]["points"]:
+            xi, yi = int(round(p["x"])), int(round(p["y"]))
+            local = canvas[yi - 30:yi + 30, xi - 30:xi + 30]
+            mask = ((local[:, :, 2] > 180) & (local[:, :, 0] < 80)
+                    & (local[:, :, 1] < 80))
+            ys, xs = np.nonzero(mask)
+            reach = int(max(np.abs(ys - 30).max(), np.abs(xs - 30).max()))
+            self.assertEqual(reach, 10,
+                             "arm=10 时臂长应为 10 px，实际 %d px" % reach)
+
+    def test_mark_arm_zero_draws_single_pixel(self):
+        """arm=0 = 栅格图像能做到的最小标记：中心 1 个像素。"""
+        img, _ = BrokenMarkDiagnosticsTests._four_marks(damage_index=None)
+        tmpdir = Path(tempfile.mkdtemp())
+        scene = tmpdir / "four.png"
+        cv2.imwrite(str(scene), img)
+        outdir = tmpdir / "out"
+        args = argparse.Namespace(image=str(scene), design=None, grid="2x2",
+                                  outdir=str(outdir), affine=False,
+                                  mark_arm=0)
+        report = mdc.process_single(str(scene), args, outdir=str(outdir),
+                                    verbose=False)
+        canvas = cv2.imread(report["outputs"]["corrected_image"])
+        for p in report["corrected_centers"]["points"]:
+            xi, yi = int(round(p["x"])), int(round(p["y"]))
+            local = canvas[yi - 10:yi + 10, xi - 10:xi + 10]
+            mask = ((local[:, :, 2] > 180) & (local[:, :, 0] < 80)
+                    & (local[:, :, 1] < 80))
+            self.assertEqual(int(mask.sum()), 1,
+                             "arm=0 应只画 1 个像素，实际 %d 个"
+                             % int(mask.sum()))
+
+    def test_mark_arm_negative_is_rejected(self):
+        """负值必须是显式报错，不能被静默夹到最小值。"""
+        from semcorr.cli import main
+        self.assertEqual(main(["--mark-arm", "-1", "whatever.tif"]), 1)
+
+    def test_line_width_is_one_pixel_at_any_size(self):
+        """线宽恒为 1 px：不随图像尺寸变化，也不因是否传 arm_px 而变。
+        （此前默认路径在大图上会缩放到 2 px，与显式路径不一致。）"""
+        from semcorr.reporting import draw_center_marks
+        for size in (500, 700, 1050, 1500):
+            g = np.full((size, size), 128, np.uint8)
+            c = (size / 2.0, size / 2.0)
+            for arm_px in (None, 3):
+                img = draw_center_marks(g, [c], arm_px=arm_px)
+                mask = ((img[:, :, 2] > 180) & (img[:, :, 0] < 80)
+                        & (img[:, :, 1] < 80))
+                cy, cx = int(c[1]), int(c[0])
+                col = mask[cy - 8:cy + 9, cx + 1]      # 横臂上、避开竖臂
+                self.assertEqual(
+                    int(col.sum()), 1,
+                    "尺寸 %d / arm_px=%s 时线宽应为 1 px，实际 %d px"
+                    % (size, arm_px, int(col.sum())))
+
+    def test_corrected_centers_form_a_square(self):
+        img, _ = BrokenMarkDiagnosticsTests._four_marks(damage_index=None)
+        tmpdir = Path(tempfile.mkdtemp())
+        scene = tmpdir / "four.png"
+        cv2.imwrite(str(scene), img)
+        outdir = tmpdir / "out"
+        args = argparse.Namespace(image=str(scene), design=None, grid="2x2",
+                                  outdir=str(outdir), affine=False)
+        report = mdc.process_single(str(scene), args, outdir=str(outdir),
+                                    verbose=False)
+        pts = {p["id"]: (p["x"], p["y"])
+               for p in report["corrected_centers"]["points"]}
+        TL, TR, BL, BR = (pts["M1"], pts["M2"], pts["M3"], pts["M4"])
+        sides = sorted([math.dist(TL, TR), math.dist(BL, BR),
+                        math.dist(TL, BL), math.dist(TR, BR)])
+        self.assertLess(sides[-1] - sides[0], 0.8,
+                        "校正后中心应构成正方形，边长极差 %.3f px"
+                        % (sides[-1] - sides[0]))
+
+
+class ScaleInvariantAreaGateTests(unittest.TestCase):
+    """面积门随 mark 尺度自适应 —— 降倍率时不能把小 mark 整批丢掉。
+
+    合成图按真实版图约定：2×2 取窗恒为 1 个大十字 + 3 个小十字
+    （面积比约 6.6，与实验室版图同量级）。"""
+
+    @staticmethod
+    def _scene(scale=1.0):
+        img = np.full((500, 500), 50, np.uint8)
+        layout = [((120, 120), (60, 10)), ((380, 120), (20, 5)),
+                  ((120, 380), (20, 5)), ((380, 380), (20, 5))]
+        for (x, y), (arm, width) in layout:
+            img[y - width // 2:y + width // 2 + 1, x - arm:x + arm + 1] = 210
+            img[y - arm:y + arm + 1, x - width // 2:x + width // 2 + 1] = 210
+        if scale != 1.0:
+            img = cv2.resize(img, None, fx=scale, fy=scale,
+                             interpolation=cv2.INTER_AREA)
+        return img
+
+    @staticmethod
+    def _correct(img, tag):
+        tmpdir = Path(tempfile.mkdtemp())
+        scene = tmpdir / (tag + ".png")
+        cv2.imwrite(str(scene), img)
+        outdir = tmpdir / "out"
+        args = argparse.Namespace(image=str(scene), design=None, grid="2x2",
+                                  outdir=str(outdir), affine=False,
+                                  mark_arm=None)
+        return mdc.process_single(str(scene), args, outdir=str(outdir),
+                                  verbose=False)
+
+    def test_area_gate_follows_anchor_area(self):
+        from semcorr.detectors.se2 import MIN_AREA_FLOOR, MIN_AREA_RATIO
+        from semcorr.detectors.se2 import find_candidates
+        for scale in (1.0, 0.4):
+            diag = {}
+            find_candidates(self._scene(scale), diag=diag)
+            self.assertAlmostEqual(
+                diag["min_area_px2"],
+                max(MIN_AREA_FLOOR, diag["anchor_area_px2"] / MIN_AREA_RATIO),
+                places=6)
+
+    def test_marks_survive_scale_down(self):
+        """缩到 40%（等效降倍率 60%）仍须检全 4 个标记。"""
+        report = self._correct(self._scene(0.4), "down")
+        self.assertEqual(report["self_check"]["n_detected"], 4)
+        self.assertLess(report["self_check"]["rms"], 1.0)
+
+    def test_fixed_threshold_would_drop_small_marks(self):
+        """对照：还原成旧的固定 300 px²，同一张图会丢掉 3 个小十字，
+        且失败信息必须指出真因是面积门，而不是把责任推给十字残缺。"""
+        from semcorr.detectors import se2 as se2_mod
+        old = (se2_mod.MIN_AREA_FLOOR, se2_mod.MIN_AREA_RATIO)
+        se2_mod.MIN_AREA_FLOOR, se2_mod.MIN_AREA_RATIO = 300.0, 1e12
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                self._correct(self._scene(0.4), "fixed")
+            msg = str(ctx.exception)
+            self.assertIn("标记不齐全", msg)
+            self.assertIn("因面积不足", msg,
+                          "失败信息应指出真因是面积门而非十字残缺")
+        finally:
+            se2_mod.MIN_AREA_FLOOR, se2_mod.MIN_AREA_RATIO = old
 
 
 if __name__ == "__main__":

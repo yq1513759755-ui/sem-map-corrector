@@ -14,6 +14,8 @@ IMAGE_EXTS = (".tif", ".tiff", ".bmp", ".png", ".jpg", ".jpeg")
 OUTPUT_SUFFIXES = (
     "_corrected.tif", "_detection.png", "_residuals.png",
     "_report.json", "_centers.csv", "_centers.png",
+    "_corrected_marked.tif", "_corrected_marked.png",
+    "_centers_corrected.csv", "_detection_failed.png",
 )
 
 

@@ -7,7 +7,8 @@ import numpy as np
 
 from ..geometry import fit_affine
 
-MIN_AREA = 300.0
+MIN_AREA_FLOOR = 30.0     # 面积下限的绝对兜底（px²）：再小就不可能是标记
+MIN_AREA_RATIO = 12.0     # 面积门 = 图中最大可信连通域面积 / 该比值
 MAX_AREA_FRAC = 0.25
 BBOX_ASPECT_RANGE = (0.35, 3.0)
 WINDOW_FACTOR = 2.0
@@ -20,27 +21,51 @@ ROBUST_REFINE_SCORE = 0.85
 ARM_WIDTH_RATIO = 0.16
 
 
-def find_candidates(gray):
-    """Otsu 阈值 + 连通域，返回粗筛后的亮区候选列表。"""
+def find_candidates(gray, diag=None):
+    """Otsu 阈值 + 连通域，返回粗筛后的亮区候选列表。
+
+    面积门是**尺度自适应**的，不再写死绝对像素：先收集"形态上像标记"的
+    连通域（面积不超画面比例上限、长宽比在范围内），取其中面积最大者作尺度
+    基准，阈值 = 基准 / MIN_AREA_RATIO，下限 MIN_AREA_FLOOR。
+
+    依据：同一版图里 mark 尺寸是固定的一族（本项目大十字/小十字面积比约
+    8–9 倍），所以"最大者 ÷ 常数"在任意倍率下都稳定落在小 mark 之下；而写死
+    绝对像素则会在降倍率时把小 mark 整批丢掉 —— 那正是"标记不齐全"最常见的
+    真实成因，且极易被误判成"十字形状不完整"。
+
+    失败时把尺度基准/阈值/被丢弃数写入 `diag`（若提供），便于诊断。
+    """
     blur = cv2.medianBlur(gray, 3)
     _, mask = cv2.threshold(blur, 0, 255,
                             cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
     h_img, w_img = gray.shape
-    cands = []
+    area_cap = MAX_AREA_FRAC * h_img * w_img
+
+    # 第一遍：只做形态筛查，收集所有"像标记"的连通域
+    plausible = []
     for i in range(1, n):
         x, y, w, h, area = stats[i]
-        if area < MIN_AREA:
-            continue
-        if area > MAX_AREA_FRAC * h_img * w_img:
+        if area > area_cap:
             continue
         aspect = float(max(w, h)) / max(1, min(w, h))
         if not (BBOX_ASPECT_RANGE[0] <= aspect <= BBOX_ASPECT_RANGE[1]):
             continue
+        plausible.append((i, int(x), int(y), int(w), int(h), float(area)))
+
+    # 第二遍：用最大者的面积定尺度，再据此筛面积
+    anchor = max((p[5] for p in plausible), default=0.0)
+    min_area = (max(MIN_AREA_FLOOR, anchor / MIN_AREA_RATIO)
+                if anchor > 0 else MIN_AREA_FLOOR)
+
+    cands = []
+    for i, x, y, w, h, area in plausible:
+        if area < min_area:
+            continue
         span_f = float(max(w, h))
         # 由连通域面积反推臂宽：十字面积 ≈ 2·span·w − w²  →  w = span − √(span²−area)
         # （模板臂宽若与真实臂宽失配，相关峰会变平并产生系统性定位偏差）
-        disc = max(span_f * span_f - float(area), 0.0)
+        disc = max(span_f * span_f - area, 0.0)
         w_est = span_f - float(np.sqrt(disc))
         arm_ratio = float(np.clip(w_est / max(span_f, 1e-6), 0.04, 0.5))
         cands.append({
@@ -48,6 +73,15 @@ def find_candidates(gray):
             "x": int(x), "y": int(y), "w": int(w), "h": int(h),
             "span": span_f, "area": float(area), "arm_ratio": arm_ratio,
             "score": None, "rx": None, "ry": None,
+        })
+    if diag is not None:
+        diag.clear()
+        diag.update({
+            "anchor_area_px2": anchor,
+            "min_area_px2": min_area,
+            "n_plausible": len(plausible),
+            "n_candidates": len(cands),
+            "n_dropped_by_area": len(plausible) - len(cands),
         })
     return cands, blur
 
@@ -251,12 +285,20 @@ def cross_shape_score(gray, x, y, span):
     return (arm - corner) / denom
 
 
-def detect_marks(gray, verbose=True):
+def detect_marks(gray, verbose=True, diag=None):
     """完整检测链：粗筛 → 亚像素精定位 → 对称性验证。
-    返回 (accepted, rejected, blur)；blur 供缺失恢复的局部重搜使用。"""
-    cands, blur = find_candidates(gray)
+    返回 (accepted, rejected, blur)；blur 供缺失恢复的局部重搜使用。
+    diag 非空时，写入粗筛的尺度基准/面积门/丢弃数（供报告与诊断）。"""
+    cands, blur = find_candidates(gray, diag=diag)
     if verbose:
         print("粗筛候选: %d 个" % len(cands))
+        if diag:
+            print("  面积门: 尺度基准 %.0f px² ÷ %.0f = 阈值 %.1f px²；"
+                  "形态合格 %d 个，其中因面积不足丢弃 %d 个"
+                  % (diag.get("anchor_area_px2", 0.0), MIN_AREA_RATIO,
+                     diag.get("min_area_px2", 0.0),
+                     diag.get("n_plausible", 0),
+                     diag.get("n_dropped_by_area", 0)))
     accepted, rejected = [], []
     for c in cands:
         x, y, score = refine_center(blur, c)
@@ -297,15 +339,47 @@ def _split_rows(cands, n_rows):
             for g in np.split(np.arange(len(pts)), cuts)]
 
 
-def recover_missing(accepted, n_rows, n_cols, image, verbose=True):
+def estimate_spacing(points):
+    """用标记点两两最小距离估计网格间距（正方形网格下即 pitch）。
+    样本不足时返回 None，供诊断信息做尺度参照。"""
+    if len(points) < 2:
+        return None
+    arr = np.asarray(points, np.float64)
+    best = None
+    for i in range(len(arr)):
+        for j in range(i + 1, len(arr)):
+            d = float(np.linalg.norm(arr[i] - arr[j]))
+            if best is None or d < best:
+                best = d
+    return best
+
+
+def _diag_fail(diag, stage, reason, **extra):
+    """把恢复失败的结构化原因写回调用方的 diag 字典（若提供）。"""
+    if diag is not None:
+        diag.clear()
+        diag.update({"stage": stage, "reason": reason})
+        diag.update(extra)
+    return None
+
+
+def recover_missing(accepted, n_rows, n_cols, image, verbose=True, diag=None):
     """网格不完整时：枚举"缺哪个格位"的所有假设。对每个假设：
     按行切分检测点并与该行剩余格位按 x 顺序配对，拟合 格点→像素 仿射，
     预测缺失位置，再在预测点局部重搜模板。均匀网格缺角时存在多个近似
     等价的仿射解释，必须用图像证据（预测点处是否真有十字）来裁决，
-    而不能只看拟合 RMS。"""
+    而不能只看拟合 RMS。
+
+    失败时返回 None，并把结构化的失败原因写入 `diag`（若提供）：
+    stage ∈ {insufficient_points, row_split, no_hypothesis, gate_rejected}，
+    其中 gate_rejected 附带缺失格位、预测位置、逐项门槛判定 —— 供调用方
+    给出"mark 十字本身是否残缺"的判断依据。"""
     n_total = n_rows * n_cols
     if len(accepted) < 3 or len(accepted) >= n_total:
-        return None
+        return _diag_fail(
+            diag, "insufficient_points",
+            "可用标记少于 3 个，无法用网格几何预测缺失位置",
+            n_detected=len(accepted), n_total=n_total)
     cells = [(r, c) for r in range(n_rows) for c in range(n_cols)]
     span_guess = float(np.median([q["span"] for q in accepted]))
     ratio_guess = float(np.median(
@@ -313,11 +387,13 @@ def recover_missing(accepted, n_rows, n_cols, image, verbose=True):
     H, W = image.shape
     rows = _split_rows(accepted, n_rows)
     if len(rows) != n_rows:
-        if verbose:
-            print("警告：缺失标记恢复失败（行切分异常）")
-        return None
+        return _diag_fail(
+            diag, "row_split",
+            "检测点无法按 y 切分为 %d 行，无法定位缺失格位" % n_rows,
+            n_detected=len(accepted), n_total=n_total)
 
     best = None  # (score, cand, missing_index, fit_rms)
+    hypotheses = []
     for m in range(n_total):
         r_m, c_m = cells[m]
         # 该假设下每行应剩哪些列；行数/行内点数必须与检测一致
@@ -343,23 +419,55 @@ def recover_missing(accepted, n_rows, n_cols, image, verbose=True):
                 "score": None, "rx": None, "ry": None}
         x, y, score = refine_center(image, cand)
         cand["rx"], cand["ry"], cand["score"] = x, y, score
+        # 三个分数在选优前一次算齐：选优仍只看模板分（与旧行为一致），
+        # 但失败时可以把完整证据链交给调用方判断"是不是十字残缺"。
+        cand["sym"] = symmetry_score(image, x, y, span_guess)
+        cand["shape"] = cross_shape_score(image, x, y, span_guess)
+        cand["combined"] = 0.5 * score + 0.5 * max(0.0, cand["sym"])
         if verbose:
-            print("  假设缺 M%d：指派RMS=%.2f px，预测 (%.1f, %.1f)，模板=%.3f" %
-                  (m + 1, rms, x, y, score))
+            print("  假设缺 M%d：指派RMS=%.2f px，预测 (%.1f, %.1f)，"
+                  "模板=%.3f 对称=%.3f 形状=%.3f" %
+                  (m + 1, rms, x, y, score, cand["sym"], cand["shape"]))
+        hypotheses.append({"slot": "M%d" % (m + 1), "fit_rms_px": rms,
+                           "predicted_px": [x, y],
+                           "template_score": float(score),
+                           "symmetry_score": float(cand["sym"]),
+                           "shape_score": float(cand["shape"])})
         if best is None or score > best[0]:
             best = (score, cand, m, rms)
 
     if best is None:
-        if verbose:
-            print("警告：缺失标记恢复失败（没有通过检验的格位指派）")
-        return None
+        return _diag_fail(
+            diag, "no_hypothesis",
+            "没有任何“缺失哪个格位”的假设能解释当前的检测分布",
+            n_detected=len(accepted), n_total=n_total)
+
     score, cand, m, rms = best
-    cand["sym"] = symmetry_score(image, cand["rx"], cand["ry"], span_guess)
-    cand["shape"] = cross_shape_score(image, cand["rx"], cand["ry"],
-                                      span_guess)
-    cand["combined"] = 0.5 * score + 0.5 * max(0.0, cand["sym"])
     cand["recovered"] = True
-    if score < RECOVER_SCORE or cand["shape"] < ARM_CONTRAST_MIN:
+    gates = [
+        {"name": "模板相关", "value": float(score),
+         "threshold": RECOVER_SCORE, "passed": bool(score >= RECOVER_SCORE)},
+        {"name": "臂角形状", "value": float(cand["shape"]),
+         "threshold": ARM_CONTRAST_MIN,
+         "passed": bool(cand["shape"] >= ARM_CONTRAST_MIN)},
+    ]
+    if diag is not None:
+        diag.clear()
+        diag.update({
+            "stage": "recovered",
+            "n_detected": len(accepted), "n_total": n_total,
+            "slot": "M%d" % (m + 1), "fit_rms_px": rms,
+            "predicted_px": [cand["rx"], cand["ry"]],
+            "template_score": float(score),
+            "symmetry_score": float(cand["sym"]),
+            "shape_score": float(cand["shape"]),
+            "gates": gates, "hypotheses": hypotheses,
+        })
+    if not all(g["passed"] for g in gates):
+        if diag is not None:
+            diag["stage"] = "gate_rejected"
+            diag["reason"] = "预测位置未通过 %s" % "、".join(
+                g["name"] for g in gates if not g["passed"])
         if verbose:
             print("警告：最佳假设（缺 M%d）预测位置模板=%.3f 形状=%.3f，"
                   "未达门槛（模板 %.2f / 形状 %.2f），恢复失败——"

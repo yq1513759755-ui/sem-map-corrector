@@ -23,6 +23,12 @@ def build_parser():
     parser.add_argument("--outdir", help="输出目录")
     parser.add_argument("--affine", action="store_true",
                         help="使用全局仿射而不是默认精确单应校正")
+    parser.add_argument("--mark-arm", type=int, default=None, metavar="PX",
+                        help="校正图上 mark 中心红色小十字的臂长"
+                             "（像素，自中心向外的长度）："
+                             "1 → 总宽 3 px / 5 个像素，"
+                             "0 → 只画中心 1 个像素；"
+                             "缺省 3 → 总宽 7 px / 13 个像素的十字")
     parser.add_argument("--version", action="version",
                         version=f"%(prog)s {__version__}")
     return parser
@@ -43,6 +49,8 @@ def main(argv=None):
         from .pipeline import correct_image
 
         _validate_grid(args.grid)
+        if args.mark_arm is not None and args.mark_arm < 0:
+            raise RuntimeError("--mark-arm 不能为负数（0 = 只画中心 1 个像素）")
         if args.batch:
             root = Path(args.batch)
             if not root.is_dir():
@@ -57,7 +65,8 @@ def main(argv=None):
                 print(f"\n================ [{index}/{len(files)}] {path.name} ================")
                 try:
                     correct_image(path, grid=args.grid, design=args.design,
-                                  outdir=outdir, affine=args.affine)
+                                  outdir=outdir, affine=args.affine,
+                                  mark_arm=args.mark_arm)
                 except (RuntimeError, FileNotFoundError, ValueError) as exc:
                     print(f"失败：{exc}")
                     failures.append((path.name, str(exc)))
@@ -68,7 +77,8 @@ def main(argv=None):
 
         image = args.image or pick_image_dialog()
         correct_image(image, grid=args.grid, design=args.design,
-                      outdir=args.outdir, affine=args.affine)
+                      outdir=args.outdir, affine=args.affine,
+                      mark_arm=args.mark_arm)
         return 0
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         print(f"错误：{exc}")
