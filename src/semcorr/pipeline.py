@@ -21,6 +21,7 @@ from .geometry import (
     rms_of,
 )
 from .io import load_design, load_gray, sha256_file, write_image
+from .infobar import detect_info_bar, strip_info_bar
 from .quality import leave_one_out, self_check
 from .reporting import (
     draw_center_marks,
@@ -169,9 +170,28 @@ def process_single(image_path, args, outdir=None, verbose=True):
         if verbose:
             print(msg)
 
-    # ---------- 1) 检测 ----------
-    gray = load_gray(image_path)
-    log("图像尺寸: %d x %d" % (gray.shape[1], gray.shape[0]))
+    # ---------- 1) 读取 + 信息栏裁切 ----------
+    raw = load_gray(image_path)
+    log("图像尺寸: %d x %d" % (raw.shape[1], raw.shape[0]))
+    gray = raw
+    info_bar = None
+    infobar_path = None
+    if not getattr(args, "keep_info_bar", False):
+        gray, info_bar = strip_info_bar(raw)
+        if info_bar is not None:
+            # 裁下的条带单独存盘：参数（Mag/WD/EHT/日期/时间…）不能丢
+            infobar_path = os.path.join(outdir, "diagnostics",
+                                        base + "_infobar.png")
+            os.makedirs(os.path.dirname(infobar_path), exist_ok=True)
+            write_image(infobar_path, raw[info_bar["top"]:, :])
+            log("已裁掉底部参数信息栏: y >= %d（%d 行，占图高 %.1f%%）"
+                "→ %d x %d" %
+                (info_bar["top"], info_bar["height"], info_bar["frac"] * 100,
+                 gray.shape[1], gray.shape[0]))
+    elif detect_info_bar(raw) is not None:
+        log("检测到参数信息栏，但 --keep-info-bar 已指定，保持原样")
+
+    # ---------- 2) 检测 ----------
     detector_diag = {}
     accepted, rejected, blur = detect_marks(gray, verbose=verbose,
                                             diag=detector_diag)
@@ -438,6 +458,8 @@ def process_single(image_path, args, outdir=None, verbose=True):
         **diagnostic_outputs,
         "report": report_path,
     }
+    if infobar_path:
+        outputs["info_bar_strip"] = infobar_path
 
     quality_warnings = []
     if sc["rms"] is None:
@@ -469,6 +491,7 @@ def process_single(image_path, args, outdir=None, verbose=True):
         "method": method,
         "grid": [n_rows, n_cols],
         "detector": detector_diag,
+        "info_bar": info_bar,
         "ideal_source": ideal_source,
         "ideal_pitch_px": pitch,
         "affine": {"A": A.tolist(), "t": t.tolist(),
@@ -511,7 +534,8 @@ def process_single(image_path, args, outdir=None, verbose=True):
 
 
 def correct_image(image_path, *, grid="2x2", design=None, outdir=None,
-                  affine=False, verbose=True, mark_arm=None):
+                  affine=False, verbose=True, mark_arm=None,
+                  keep_info_bar=False):
     """Correct one SE2 image and return its structured report."""
     args = SimpleNamespace(
         image=os.fspath(image_path),
@@ -521,6 +545,7 @@ def correct_image(image_path, *, grid="2x2", design=None, outdir=None,
         outdir=os.fspath(outdir) if outdir is not None else None,
         affine=bool(affine),
         mark_arm=None if mark_arm is None else int(mark_arm),
+        keep_info_bar=bool(keep_info_bar),
     )
     return process_single(os.fspath(image_path), args, outdir=args.outdir,
                           verbose=verbose)

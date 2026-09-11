@@ -298,6 +298,9 @@ def print_outputs(outputs, verbose=True):
     print("\n输出：")
     print("  校正图       : %s   [红=mark 中心]" % outputs["corrected_image"])
     print("  校正后坐标   : %s" % outputs["centers_corrected_csv"])
+    if outputs.get("info_bar_strip"):
+        print("  参数栏条带   : %s   [已从画面裁下，参数备查]"
+              % outputs["info_bar_strip"])
     print("  定位诊断     : %s" % outputs["detection_overlay"])
     print("  残差诊断     : %s" % outputs["residual_plot"])
     print("  原图中心     : %s" % outputs["centers_csv"])

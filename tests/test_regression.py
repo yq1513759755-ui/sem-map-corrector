@@ -709,5 +709,134 @@ class ScaleInvariantAreaGateTests(unittest.TestCase):
             se2_mod.MIN_AREA_FLOOR, se2_mod.MIN_AREA_RATIO = old
 
 
+class InfoBarTests(unittest.TestCase):
+    """底部参数信息栏的检测与裁切。
+
+    合成图模拟 Zeiss 风格：灰度噪声画面 + 底部纯黑条带 + 条带内白色参数文字。"""
+
+    @staticmethod
+    def _scene_with_bar(height=40, width=400, text=True, bar_gray=0,
+                        bar_at="bottom"):
+        rng = np.random.default_rng(3)
+        img = rng.integers(90, 150, size=(300, width), dtype=np.uint8)
+        bar = np.full((height, width), bar_gray, np.uint8)
+        if text:
+            for x in range(10, width - 20, 45):
+                bar[height // 3:height // 3 + 7, x:x + 26] = 240
+        if bar_at == "bottom":
+            return np.vstack([img, bar])
+        # 中央暗带（不应被当成信息栏）
+        return np.vstack([img, bar, img[:120]])
+
+    def _scene_without_bar(self, width=400):
+        rng = np.random.default_rng(4)
+        return rng.integers(90, 150, size=(340, width), dtype=np.uint8)
+
+    def test_detects_synthetic_info_bar(self):
+        from semcorr.infobar import detect_info_bar
+        img = self._scene_with_bar(height=40, width=400)
+        info = detect_info_bar(img)
+        self.assertIsNotNone(info, "未能检出合成信息栏")
+        self.assertEqual(info["top"], 300, "裁切行应为条带上沿")
+        self.assertEqual(info["bottom"], img.shape[0] - 1)
+
+    def test_plain_image_has_no_bar(self):
+        from semcorr.infobar import detect_info_bar, strip_info_bar
+        img = self._scene_without_bar()
+        self.assertIsNone(detect_info_bar(img))
+        cropped, info = strip_info_bar(img)
+        self.assertIsNone(info)
+        self.assertIs(cropped, img, "未检出时应原样返回，不做任何裁切")
+
+    def test_uniformly_dark_image_is_not_a_bar(self):
+        """整幅都暗 → 占比会超上限，不能判成信息栏（否则会把全图裁掉）。"""
+        from semcorr.infobar import detect_info_bar
+        img = np.full((300, 400), 5, np.uint8)
+        self.assertIsNone(detect_info_bar(img))
+
+    def test_middle_dark_band_is_rejected(self):
+        """暗带不在底部 → 不是信息栏。"""
+        from semcorr.infobar import detect_info_bar
+        img = self._scene_with_bar(height=40, width=400, bar_at="middle")
+        self.assertIsNone(detect_info_bar(img))
+
+    def test_dark_band_without_text_is_rejected(self):
+        """纯黑无文字的带 → 更可能是样品暗区，不裁。"""
+        from semcorr.infobar import detect_info_bar
+        img = self._scene_with_bar(height=40, width=400, text=False)
+        self.assertIsNone(detect_info_bar(img))
+
+    def test_dark_gray_band_is_rejected(self):
+        """底色不是纯黑（只是偏暗）→ 不裁，避免误砍样品暗区。"""
+        from semcorr.infobar import detect_info_bar
+        img = self._scene_with_bar(height=40, width=400, bar_gray=70)
+        self.assertIsNone(detect_info_bar(img))
+
+    def test_detection_is_width_independent(self):
+        """条带判据对画面宽度不敏感（白字占比变化不影响判定）。"""
+        from semcorr.infobar import detect_info_bar
+        for width in (200, 400, 1024):
+            info = detect_info_bar(self._scene_with_bar(height=40,
+                                                        width=width))
+            self.assertIsNotNone(info, "宽度 %d 时漏检" % width)
+            self.assertEqual(info["top"], 300)
+
+
+class InfoBarPipelineTests(unittest.TestCase):
+    """信息栏裁切接入主流程：默认自动裁，--keep-info-bar 保持原样。"""
+
+    @staticmethod
+    def _raw_with_bar():
+        img, _ = BrokenMarkDiagnosticsTests._four_marks(damage_index=None)
+        h, w = img.shape
+        height = max(10, int(round(0.06 * h)))
+        bar = np.zeros((height, w), np.uint8)
+        for x in range(8, w - 24, 40):
+            bar[height // 3:height // 3 + 6, x:x + 22] = 240
+        return np.vstack([img, bar])
+
+    def _run(self, img, tag, **kw):
+        tmpdir = Path(tempfile.mkdtemp())
+        scene = tmpdir / (tag + ".png")
+        cv2.imwrite(str(scene), img)
+        outdir = tmpdir / "out"
+        args = argparse.Namespace(image=str(scene), design=None, grid="2x2",
+                                  outdir=str(outdir), affine=False,
+                                  mark_arm=None,
+                                  keep_info_bar=kw.get("keep_info_bar", False))
+        return mdc.process_single(str(scene), args, outdir=str(outdir),
+                                  verbose=False)
+
+    def test_pipeline_strips_bar_and_still_succeeds(self):
+        img = self._raw_with_bar()
+        report = self._run(img, "withbar")
+        self.assertIsNotNone(report["info_bar"], "报告应记录信息栏")
+        self.assertEqual(report["info_bar"]["top"], img.shape[0]
+                         - report["info_bar"]["height"])
+        self.assertEqual(report["self_check"]["n_detected"], 4)
+        self.assertTrue(Path(report["outputs"]["info_bar_strip"]).exists(),
+                        "裁下的条带应单独存盘备查")
+
+    def test_matches_clean_image_result(self):
+        """带栏图裁切后的结果，应与干净原图完全一致。"""
+        img = self._raw_with_bar()
+        clean, _ = BrokenMarkDiagnosticsTests._four_marks(damage_index=None)
+        a = self._run(img, "withbar")
+        b = self._run(clean, "clean")
+        self.assertEqual(a["self_check"]["n_detected"],
+                         b["self_check"]["n_detected"])
+        for ma, mb in zip(a["marks"], b["marks"]):
+            self.assertAlmostEqual(ma["detected_px"][0], mb["detected_px"][0],
+                                   places=6)
+            self.assertAlmostEqual(ma["detected_px"][1], mb["detected_px"][1],
+                                   places=6)
+
+    def test_keep_info_bar_disables_cropping(self):
+        img = self._raw_with_bar()
+        report = self._run(img, "keep", keep_info_bar=True)
+        self.assertIsNone(report["info_bar"])
+        self.assertNotIn("info_bar_strip", report["outputs"])
+
+
 if __name__ == "__main__":
     unittest.main()

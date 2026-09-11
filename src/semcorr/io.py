@@ -16,6 +16,7 @@ OUTPUT_SUFFIXES = (
     "_report.json", "_centers.csv", "_centers.png",
     "_corrected_marked.tif", "_corrected_marked.png",
     "_centers_corrected.csv", "_detection_failed.png",
+    "_infobar.png",
 )
 
 

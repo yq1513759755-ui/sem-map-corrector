@@ -29,6 +29,9 @@ def build_parser():
                              "1 → 总宽 3 px / 5 个像素，"
                              "0 → 只画中心 1 个像素；"
                              "缺省 3 → 总宽 7 px / 13 个像素的十字")
+    parser.add_argument("--keep-info-bar", action="store_true",
+                        help="保留下方的 SEM 参数信息栏。默认自动检测并裁掉"
+                             "（裁下的条带另存为 *_infobar.png 备查）")
     parser.add_argument("--version", action="version",
                         version=f"%(prog)s {__version__}")
     return parser
@@ -66,7 +69,8 @@ def main(argv=None):
                 try:
                     correct_image(path, grid=args.grid, design=args.design,
                                   outdir=outdir, affine=args.affine,
-                                  mark_arm=args.mark_arm)
+                                  mark_arm=args.mark_arm,
+                                  keep_info_bar=args.keep_info_bar)
                 except (RuntimeError, FileNotFoundError, ValueError) as exc:
                     print(f"失败：{exc}")
                     failures.append((path.name, str(exc)))
@@ -78,7 +82,8 @@ def main(argv=None):
         image = args.image or pick_image_dialog()
         correct_image(image, grid=args.grid, design=args.design,
                       outdir=args.outdir, affine=args.affine,
-                      mark_arm=args.mark_arm)
+                      mark_arm=args.mark_arm,
+                      keep_info_bar=args.keep_info_bar)
         return 0
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         print(f"错误：{exc}")
