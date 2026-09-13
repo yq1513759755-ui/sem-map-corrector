@@ -254,6 +254,18 @@ M1,100.045,78.432,self-check,px
 失败信息里若出现"⚠ 有 N 个亮结构因面积不足被丢弃"，请先确认**成像倍率**
 是否偏低，而不是直接怀疑十字残缺。
 
+## AutoCAD 精确贴图（scripts/make_cad_align.py）
+
+套刻工作流用：从校正结果自动生成把校正图精确贴进版图设计坐标系（µm）的
+IMAGEATTACH 三要素（插入点 / 比例 µm每px / 旋转角）与一键 `.scr` 脚本，
+替代手动 ALIGN 时人眼点击 mark 中心的 0.1–0.3 µm 误差（拟合残差 ~0.01 µm）。
+锚定规则（文件名编码 = 大十字设计坐标）与 180° 方向二义性的处理见脚本头部
+文档与 CHANGELOG。
+
+```bash
+.venv/bin/python scripts/make_cad_align.py [图像文件夹]
+```
+
 ## Jupyter 交互版
 
 不想用命令行的用户可以打开 `semcorr_notebook.ipynb`：与 CLI 完全等价
