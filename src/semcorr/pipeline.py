@@ -186,7 +186,7 @@ def process_single(image_path, args, outdir=None, verbose=True):
             write_image(infobar_path, raw[info_bar["top"]:, :])
             log("已裁掉底部参数信息栏: y >= %d（%d 行，占图高 %.1f%%）"
                 "→ %d x %d" %
-                (info_bar["top"], info_bar["height"], info_bar["frac"] * 100,
+                (info_bar["top"], info_bar["removed_rows"], info_bar["removed_frac"] * 100,
                  gray.shape[1], gray.shape[0]))
     elif detect_info_bar(raw) is not None:
         log("检测到参数信息栏，但 --keep-info-bar 已指定，保持原样")
@@ -471,7 +471,16 @@ def process_single(image_path, args, outdir=None, verbose=True):
     if (sc["rms"] is not None
             and sc["rms"] > max(1.0, 3.0 * rms_used)):
         quality_warnings.append("校正后残差明显大于拟合残差")
+    edge_unverified = [m["id"] for m in sc["marks"]
+                       if m.get("detected") is not None
+                       and m.get("center_refinement", {}).get("method") != "arm-edges"]
+    if edge_unverified:
+        quality_warnings.append("以下中心仅有模板定位，未通过四臂边缘复核："
+                                + "、".join(edge_unverified))
     quality_status = "WARN_REVIEW" if quality_warnings else "PASS"
+    log("质量状态: %s" % quality_status)
+    for warning in quality_warnings:
+        log("  需复核: %s" % warning)
 
     report = {
         "schema_version": 2,
@@ -522,6 +531,7 @@ def process_single(image_path, args, outdir=None, verbose=True):
              "ideal": list(map(float, ideal[i])),
              "residual_px": resid_used[i].tolist(),
              "detector": "se2-intensity",
+             "center_refinement": assigned_cands[i].get("center_refinement", {}),
              "recovered_from_grid_search": bool(
                  assigned_cands[i].get("recovered", False))}
             for i in range(len(names))

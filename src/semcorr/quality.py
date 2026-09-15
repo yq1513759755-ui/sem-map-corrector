@@ -93,7 +93,7 @@ def self_check(corrected, ideal, n_rows, n_cols, span_hint=None, verbose=False):
             continue
         used_i.add(i)
         used_j.add(j)
-        match[i] = (det[j], d)
+        match[i] = (det[j], d, accepted[j].get("center_refinement", {}))
     # 未配对格位的定向回退：校正后每个 mark 的位置是**已知**的（理想
     # 格位），不存在指派歧义——直接在理想位置做局部模板+形状验证。
     # 被污染/粘连的 mark（如图册数字旁的十字）常通不过常规验收门，
@@ -116,17 +116,19 @@ def self_check(corrected, ideal, n_rows, n_cols, span_hint=None, verbose=False):
             if score >= RECOVER_SCORE and shape >= ARM_CONTRAST_MIN:
                 match[i] = ((x, y),
                             float(np.linalg.norm(np.array([x, y])
-                                                 - ideal_arr[i])))
+                                                 - ideal_arr[i])),
+                            cand.get("center_refinement", {}))
                 recovered_slots.append(i)
     marks = []
     res = []
     for i in range(len(ideal_arr)):
         nm = "M%d" % (i + 1)
         if i in match:
-            p, d = match[i]
+            p, d, evidence = match[i]
             marks.append({"id": nm,
                           "detected": [float(p[0]), float(p[1])],
                           "residual": float(d),
+                          "center_refinement": evidence,
                           "verified_at_ideal_position": i in recovered_slots})
             res.append(d)
         else:

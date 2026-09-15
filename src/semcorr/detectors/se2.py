@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from ..geometry import fit_affine
+from .edges import refine_arm_edges
 
 MIN_AREA_FLOOR = 30.0     # 面积下限的绝对兜底（px²）：再小就不可能是标记
 MIN_AREA_RATIO = 12.0     # 面积门 = 图中最大可信连通域面积 / 该比值
@@ -151,6 +152,13 @@ def refine_center(image, cand):
         rx, ry, _ = robust_refine(image, best[0], best[1],
                                   best_span, ratio)
         best = (rx, ry, best[2])
+    edge_center = refine_arm_edges(image, best[0], best[1], best_span)
+    if edge_center is not None:
+        rx, ry, evidence = edge_center
+        best = (rx, ry, best[2])
+        cand["center_refinement"] = evidence
+    else:
+        cand["center_refinement"] = {"method": "template-fallback"}
     return best
 
 

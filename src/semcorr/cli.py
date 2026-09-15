@@ -63,18 +63,22 @@ def main(argv=None):
                 raise RuntimeError(f"目录中没有可处理的图像: {root}")
             outdir = Path(args.outdir) if args.outdir else root / "corrected"
             print(f"批量处理 {len(files)} 张 SE2 图像 → {outdir}")
-            failures = []
+            failures, reviews = [], []
             for index, path in enumerate(files, 1):
                 print(f"\n================ [{index}/{len(files)}] {path.name} ================")
                 try:
-                    correct_image(path, grid=args.grid, design=args.design,
+                    report = correct_image(path, grid=args.grid, design=args.design,
                                   outdir=outdir, affine=args.affine,
                                   mark_arm=args.mark_arm,
                                   keep_info_bar=args.keep_info_bar)
+                    if report["quality_status"] != "PASS":
+                        reviews.append((path.name, report["quality_warnings"]))
                 except (RuntimeError, FileNotFoundError, ValueError) as exc:
                     print(f"失败：{exc}")
                     failures.append((path.name, str(exc)))
-            print(f"\n===== 批量完成：成功 {len(files) - len(failures)} / 失败 {len(failures)} =====")
+            print(f"\n===== 批量完成：通过 {len(files) - len(failures) - len(reviews)} / 需复核 {len(reviews)} / 失败 {len(failures)} =====")
+            for name, warnings in reviews:
+                print(f"  [需复核] {name}: {'; '.join(warnings)}")
             for name, error in failures:
                 print(f"  [失败] {name}: {error}")
             return 1 if failures else 0

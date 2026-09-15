@@ -62,42 +62,42 @@ def detect_info_bar(gray):
     if idx.size == 0:
         return None
 
-    # 自最后一条"像栏"的行往上走，取这条连续段
-    bottom = int(idx[-1])
-    present = set(idx.tolist())
-    top = bottom
-    while (top - 1) in present:
-        top -= 1
-    height = bottom - top + 1
+    # 白色边框会把参数栏和最底部的一行样品/窗口像素隔开。
+    # 从下往上检查每个暗行连续段，不能只检查最后一段。
+    groups = np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1)
+    for group in reversed(groups):
+        top, bottom = int(group[0]), int(group[-1])
+        height = bottom - top + 1
+        if bottom < h - 1 - max(2, int(round(INFO_BAR_BOTTOM_SLACK * h))):
+            continue
+        frac = height / float(h)
+        if height < INFO_BAR_MIN_ROWS or not (INFO_BAR_MIN_FRAC <= frac
+                                              <= INFO_BAR_MAX_FRAC):
+            continue
+        band = gray[top:bottom + 1, :]
+        bg_pct = float(np.percentile(band, INFO_BAR_BG_PCT))
+        if bg_pct >= INFO_BAR_BG_MAX:
+            continue
+        step = float(row_median[top - 1] - np.median(row_median[top:bottom + 1])) \
+            if top > 0 else 0.0
+        if step < INFO_BAR_MIN_STEP:
+            continue
+        if float(np.percentile(band, INFO_BAR_TEXT_PCT)) < INFO_BAR_TEXT_MIN:
+            continue
 
-    # 判据 2：贴底（下方容许少量非栏行 = 截图窗口边缘）
-    if bottom < h - 1 - max(2, int(round(INFO_BAR_BOTTOM_SLACK * h))):
-        return None
-
-    # 判据 3：高度占比
-    frac = height / float(h)
-    if height < INFO_BAR_MIN_ROWS or not (INFO_BAR_MIN_FRAC <= frac
-                                          <= INFO_BAR_MAX_FRAC):
-        return None
-
-    # 判据 4a：底色近乎纯黑（区别于"样品本身的暗区"）
-    band = gray[top:bottom + 1, :]
-    bg_pct = float(np.percentile(band, INFO_BAR_BG_PCT))
-    if bg_pct >= INFO_BAR_BG_MAX:
-        return None
-
-    # 判据 4b：上沿陡降（拿条带整体中位行灰度作参照，避免单行受文字影响）
-    step = float(row_median[top - 1] - np.median(row_median[top:bottom + 1])) \
-        if top > 0 else 0.0
-    if step < INFO_BAR_MIN_STEP:
-        return None
-
-    # 判据 4c：栏内存在近白的参数文字
-    if float(np.percentile(band, INFO_BAR_TEXT_PCT)) < INFO_BAR_TEXT_MIN:
-        return None
-
-    return {"top": int(top), "bottom": int(bottom), "height": int(height),
-            "frac": float(frac), "step": step, "bg_pct": bg_pct}
+        dark_top = top
+        # 参数栏上方的近白通栏分隔线也属于参数栏；最多回收 4 行。
+        # 普通样品亮区或没有边框的旧导出图不受影响。
+        for _ in range(4):
+            if top > 0 and float((gray[top - 1] >= 245).mean()) >= 0.90:
+                top -= 1
+            else:
+                break
+        return {"top": top, "bottom": bottom, "height": bottom - top + 1,
+                "frac": (bottom - top + 1) / float(h), "step": step,
+                "bg_pct": bg_pct, "dark_top": dark_top,
+                "removed_rows": h - top, "removed_frac": (h - top) / float(h)}
+    return None
 
 
 def strip_info_bar(gray):
