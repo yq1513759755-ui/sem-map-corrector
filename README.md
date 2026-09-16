@@ -2,48 +2,103 @@
 
 [![CI](https://github.com/yq1513759755-ui/sem-map-corrector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yq1513759755-ui/sem-map-corrector/actions/workflows/ci.yml)
 
-实验室共享的 Zeiss SE2 SEM 十字标记定位与几何畸变校正工具。
+面向实验室的 **SE2 SEM 十字标记定位、图像几何校正与 AutoCAD 数值贴图工具**。
+提供原图批量处理到 CAD 贴图包的一键工作流，减少人工点击十字中心和逐张调整比例的操作。
 
-本项目只维护旧版 **SE2 实心亮十字** 算法，不包含 InLens 浮雕风格的
-自动识别。输入图像类型必须由操作者确认，不做自动风格切换。
+**当前版本：0.3.1。** 支持 SE2 实心亮十字；不自动识别 InLens 浮雕风格。
+CAD 贴图使用人工提供的位置标注，不从重复标记阵列猜测绝对坐标。
 
-## 一条命令下载
+## 主要功能
 
-在 macOS 或 Linux 终端执行：
+- 自动裁去底部 SEM 参数栏及白色边框，裁下的参数栏另存备查。
+- 模板检测结合四臂边缘中轴交点定位，提供亚像素中心、几何校正和校正后复检。
+- 从文件名读取左下十字的版图坐标，生成 AutoCAD 贴图脚本、图像副本及数值参数。
+- 统一记录通过、需复核和失败结果；本次失败图片不会借用历史成功报告进入贴图包。
+- 支持命令行、Python API 和 Jupyter 校正；输入原图不被修改。
+
+## 快速开始
+
+### 1. 下载
 
 ```bash
-git clone --depth 1 https://github.com/yq1513759755-ui/sem-map-corrector.git && cd sem-map-corrector && ./semcorr --help
-```
-
-下载后处理单张图像：
-
-```bash
+git clone --depth 1 https://github.com/yq1513759755-ui/sem-map-corrector.git
 cd sem-map-corrector
-./semcorr "/path/to/image.tif"
 ```
 
-批量处理一个文件夹：
+需要 Python 3.11 或以上版本。macOS / Linux 下的 `./semcorr` 首次运行会在项目内
+创建 `.venv`；缺少 NumPy、OpenCV 或 Matplotlib 时安装依赖，后续复用该环境。
+如需指定 Python：
 
 ```bash
-./semcorr --batch "/path/to/image_folder"
+SEMCORR_PYTHON=/path/to/python ./semcorr --help
 ```
 
-## 最简单的调用方式
+### 2. 给原图标注左下坐标
 
-把整个 `sem-map-corrector` 文件夹复制到个人电脑后，在终端进入该目录：
+例如 `sample(3.5,2).tif`：括号内表示**图中左下十字中心**应处于
+版图 `(350,200) µm`，即括号数值乘以 100。
+
+CAD 流程约定：四标记 2×2 网格，默认相邻间距 50 µm，图像向右为版图 +X、
+向上为 +Y，版图 1 个绘图单位代表 1 µm。相同外观的重复标记不能提供绝对位置，
+因此文件名标注需由操作者确认。
+
+### 3. 一条命令完成校正与贴图包生成
+
+```bash
+./semcorr --batch "/path/to/annotated_images" --cad
+```
+
+结果写入该图片目录的 `corrected/`：
+
+```text
+corrected/
+├── *_corrected.tif       校正图，包含红色中心标记
+├── diagnostics/          定位诊断、坐标、参数栏与逐图报告
+├── workflow_summary.json 批次状态及未导出原因
+└── cad/
+    ├── sem_map.lsp       AutoCAD 贴图程序
+    ├── attach_all.scr    批量运行入口
+    ├── images/           贴图使用的图像副本
+    ├── cad_params.csv    插入点、比例、角度及残差
+    └── cad_manifest.json 坐标约定、输入哈希及导出记录
+```
+
+### 4. 在 AutoCAD 中贴图
+
+在版图副本的模型空间、命令空闲状态操作：
+
+1. `APPLOAD` 加载本批次 `corrected/cad/sem_map.lsp`。
+2. `SEMMAPONE` 试贴第一张，检查位置、方向和尺寸。
+3. `SEMMAP` 批量贴图，`SEMMAPCHECK` 检查实际图像变换。
+4. 核对后另存 DWG，并保留 `cad/images/`；图像是外部参照。
+
+每张图片使用独立 `SEM_` 图层；同一贴图包重复运行时检查已有图像，避免重复插入。
+程序不自动打开、控制或保存 AutoCAD 图形。配准残差不是实际曝光套刻精度。
+
+## 其他常用入口
+
+只校正单张或整批图像（无需坐标文件名）：
 
 ```bash
 ./semcorr image.tif
 ./semcorr --batch image_folder
 ```
 
-第一次运行会在项目内自动创建 `.venv`；只有缺少 NumPy、OpenCV 或
-Matplotlib 时才会联网安装，之后仍使用相同命令，不会修改电脑的全局
-Python 环境。如果实验室已有指定的 Python/Conda，首次运行建议指定它：
+已有校正结果时，仅生成贴图包：
 
 ```bash
-SEMCORR_PYTHON=/path/to/python ./semcorr image.tif
+.venv/bin/python scripts/make_cad_align.py "/path/to/annotated_images"
 ```
+
+改变输出目录、标记物理间距或 CAD 单点误差门槛：
+
+```bash
+./semcorr --batch image_folder --cad --outdir output_folder \
+  --pitch-um 50 --max-residual-um 0.05
+```
+
+详细参数见 `./semcorr --help`。一键流程只接受通过质量检查的结果；有未导出图片时
+返回码为 1，但其他合格图片仍生成贴图包。原因见 `workflow_summary.json`。
 
 ## 标准安装
 
@@ -79,11 +134,14 @@ semcorr --batch image_folder
 semcorr image.tif --grid 2x3
 ```
 
-### 设计坐标（可选，`--design`）
+### 高级校正坐标（可选，`--design`）
 
-默认从检测点推断**正方形**网格（间距 = 全部行列间距的中位数）。若版图
-的 mark 间距不是正方形，或需要以设计坐标系（如 µm）表达理想坐标，
-传入 `--design`：
+默认从检测点推断正方形理想网格。`--design` 可指定 M1..Mn 的目标坐标，
+但当前实现会直接将其作为输出栅格坐标，输出尺寸仍沿用原图，尚不自动换算
+物理单位、原点或画布范围。坐标应位于输出画面内。
+
+**CAD 贴图请使用文件名括号坐标和 `--cad`，不要把芯片绝对微米坐标直接传给
+`--design`。** 两个参数不能在一键流程中同时使用。
 
 ```bash
 semcorr image.tif --design design.json
@@ -94,15 +152,15 @@ semcorr image.tif --design design.json
 
 ```json
 {
-  "M1": [0.0, 0.0],
-  "M2": [200.0, 0.0],
-  "M3": [0.0, 200.0],
-  "M4": [200.0, 200.0]
+  "M1": [100.0, 100.0],
+  "M2": [300.0, 100.0],
+  "M3": [100.0, 300.0],
+  "M4": [300.0, 300.0]
 }
 ```
 
-此后报告与 `diagnostics/*_centers.csv` 中的理想坐标、残差均以设计单位
-表示。
+报告中的 `ideal` 为提供的目标坐标；拟合残差和 `*_centers.csv` 仍在原图像素
+坐标系中。`--design` 路径尚存在单位命名限制，不作为物理坐标标定接口。
 
 ## 自动裁掉底部参数栏
 
@@ -277,17 +335,70 @@ M1,100.045,78.432,self-check,px
 失败信息里若出现"⚠ 有 N 个亮结构因面积不足被丢弃"，请先确认**成像倍率**
 是否偏低，而不是直接怀疑十字残缺。
 
-## AutoCAD 精确贴图（scripts/make_cad_align.py）
+## 一条命令：校正并生成 AutoCAD 贴图包
 
-套刻工作流用：从校正结果自动生成把校正图精确贴进版图设计坐标系（µm）的
-IMAGEATTACH 三要素（插入点 / 比例 µm每px / 旋转角）与一键 `.scr` 脚本，
-替代手动 ALIGN 时人眼点击 mark 中心的 0.1–0.3 µm 误差（拟合残差 ~0.01 µm）。
-锚定规则（文件名编码 = 大十字设计坐标）与 180° 方向二义性的处理见脚本头部
-文档与 CHANGELOG。
+带左下坐标标注的原图可以直接运行：
 
 ```bash
-.venv/bin/python scripts/make_cad_align.py [图像文件夹]
+./semcorr --batch /path/to/annotated_images --cad
 ```
+
+程序依次裁信息栏、定位中心、校正、复检，再生成 `corrected/cad/sem_map.lsp`。
+`corrected/workflow_summary.json` 统一记录可贴图、校正失败、需复核及 CAD 检查
+未通过的图片和原因。本次失败或需复核的图片不会复用以前的成功报告。
+有图片未导出时返回码为 1，但其余合格图片仍正常生成贴图包。
+
+在 AutoCAD 中 APPLOAD 加载本批次 `sem_map.lsp`，先 `SEMMAPONE`，核对后再
+`SEMMAP`。本命令只生成文件，不会打开或控制 AutoCAD。
+
+- 原有不带 `--cad` 的单图、批量校正用法保持不变。
+- 一键流程限 `--grid 2x2`，不能同时使用 `--design`；绝对坐标来自文件名括号。
+- `--outdir DIR` 指定整个输出目录，贴图包在 `DIR/cad/`。
+- 可选 `--anchor-overrides FILE`、`--pitch-um 50`、`--max-residual-um 0.05`。
+- 已有校正结果仍可用下文的独立 CAD 导出脚本，避免重新校正。
+
+## AutoCAD 数值贴图（0.3.0）
+
+文件名末尾的 `(x,y)` 表示**图中左下十字 M3** 的设计坐标，数值乘以
+100 转为 µm。例如 `0303-02(3.5,2).tif` 的左下锚点为 `(350,200) µm`。
+此模式不识别数字、不依赖大十字，也不从原有四位编号猜坐标。
+图像向右对应 CAD +X，图像向上对应 CAD +Y；默认相邻间距为 50 µm。
+
+先按原命令生成校正图，再运行：
+
+```bash
+.venv/bin/python scripts/make_cad_align.py /path/to/annotated_images
+```
+
+结果在该批次的 `corrected/cad/`：
+
+- `sem_map.lsp`：在 AutoCAD 用 APPLOAD 加载，先输入 `SEMMAPONE` 试贴第一张，确认后 `SEMMAP` 批量贴图。
+- `attach_all.scr`：也可用 SCRIPT 加载这一文件。
+- `cad_params.csv`、`cad_manifest.json`：插入点、每像素比例、角度、逐点残差、跳过原因和哈希。
+- `images/`：贴图用的校正图副本。请保留整个文件夹，DWG 中图像是外部参照。
+
+在版图**副本的模型空间**运行，1 个绘图单位代表 1 µm。先取消尚未完成的
+文件选择或其他命令，再运行脚本。每张图使用独立的 `SEM_` 图层；同一批结果
+重复运行会跳过已经放置且变换一致的图像。`SEMMAPCHECK` 可核查 CAD 中实际
+IMAGE 的尺寸与变换。脚本不会自动保存或覆盖当前图形。
+
+左下锚点严格固定；其余三个点联合拟合旋转和等比缩放。导出要求质量 PASS、
+四个中心均为边缘复检结果、原图哈希一致、单位为 px，且最大单点配准残差不超过
+0.05 µm。失败图像只记录原因，不导出虚构坐标。配准残差不是曝光套刻精度。
+
+为了避免 DPI/INSUNITS 引入比例错误，先附着图像，再显式设置 IMAGE 的
+DXF 10/11/12（插入点和两个每像素向量）；不把 µm/px 直接当作附着缩放倍数。
+像素中心转换采用 `(x+0.5, H-y-0.5)`，包含相对外边界的半像素偏移。
+
+原图重命名后，可用输入 SHA256 重新关联唯一的已有校正报告，无需仅因改名重算。
+错写的坐标不会自动猜测；可修正文件名，或在批次目录写 `cad_anchor_overrides.json`：
+
+```json
+{"image_name_with_annotation": [3.5, 2]}
+```
+
+覆盖值同样以 100 µm 为单位。可选参数：`--anchor-overrides FILE`、
+`--pitch-um 50`、`--max-residual-um 0.05`、`--outdir DIR`。
 
 ## Jupyter 交互版
 
@@ -305,7 +416,8 @@ IMAGEATTACH 三要素（插入点 / 比例 µm每px / 旋转角）与一键 `.sc
   `affine.rms_px`（体现非仿射/透视成分）与 `self_check.rms`（校正后端到端
   复检）。留一验证在 4 点下会返回"不适用"（无冗余可校验）。
 - **理想网格是从检测点反推的**（除非传 `--design`），所以 `self_check` 只证明
-  模型自洽，不证明那 4 个点就是设计意图的 mark —— 定位实验请用 `--design`
-  固定绝对坐标，否则校正图的尺度随每张图的实测间距浮动，跨图不可比。
+  模型自洽，不证明那 4 个点就是设计意图的 mark —— CAD 定位请用
+  `--cad`，结合人工左下坐标和已知物理间距标定。校正图本身仍以像素表示，
+  跨图比较物理长度时须使用各图的 µm/px 比例。
 - 自动化测试使用合成图像，不随公开仓库分发实验图像、文件名、哈希或中心坐标。
 - 四点单应残差不能代替人工查看检测图；用于正式实验前，请先确认红色中心落在十字中心。

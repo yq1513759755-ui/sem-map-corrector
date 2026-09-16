@@ -20,6 +20,7 @@ test = ["pytest>=8,<10"]
 
 [project.scripts]
 semcorr = "semcorr.cli:main"
+semcorr-cad = "semcorr.cad:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -31,3 +32,6 @@ version = {attr = "semcorr.__version__"}
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
+
+[tool.setuptools.package-data]
+semcorr = ["*.lsp"]
