@@ -1,4 +1,4 @@
-"""AutoCAD raster placement from filename (x,y) bottom-left mark anchors."""
+"""AutoCAD raster placement from marker-row.column region filenames."""
 from __future__ import annotations
 import argparse
 import csv
@@ -12,25 +12,40 @@ import cv2
 import numpy as np
 from .io import list_images, sha256_file
 
-NUMBER = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)'
-ANCHOR = re.compile(r'[（(]\s*('+NUMBER+r')\s*[,，]\s*('+NUMBER+r')\s*[)）]$')
+REGION = re.compile(r'(?P<marker>[0-9]{4})-(?P<row>[1-4])\.(?P<col>[1-4])(?:_(?P<sequence>[0-9]{2,}))?')
 IDS = ('M1','M2','M3','M4')
+REGION_PITCH_UM = 50.0
 
 
-def parse_anchor(stem, overrides=None):
-    if overrides and stem in overrides:
-        value = overrides[stem]
-        if not isinstance(value,list) or len(value)!=2:
-            raise ValueError('坐标覆盖必须为 [x,y]，单位为 100 µm')
-        xy=np.asarray(value,dtype=float);source='explicit-override'
-    else:
-        m=ANCHOR.search(stem)
-        if not m:
-            raise ValueError('文件名末尾必须为 (x,y)，例如 (3.5,2)；不猜测坐标')
-        xy=np.array([float(m[1]),float(m[2])]);source='filename-bottom-left'
-    if not np.isfinite(xy).all():
-        raise ValueError('坐标必须为有限数值')
-    return xy*100.,source
+def parse_region(stem):
+    """Decode aabb-row.column; rows go down, columns go right.
+
+    The aabb marker is the centre of a 200 um square, divided into 4x4 cells.
+    A dot separates two integer indices; it is not a decimal coordinate.
+    """
+    match = REGION.fullmatch(stem)
+    if not match or (match['sequence'] is not None and int(match['sequence']) < 1):
+        raise ValueError('图片命名必须为 0303-1.4.tif（数字marker-行.列，行列均为1–4）；'
+                         '同格多图可加 _01 序号。旧括号坐标及 r3c4 格式已停用')
+    marker = match['marker']
+    row, column = int(match['row']), int(match['col'])
+    xc, yc = 100.0 * int(marker[:2]), 100.0 * int(marker[2:])
+    x0 = xc - 100.0 + 50.0 * (column - 1)
+    y0 = yc + 100.0 - 50.0 * row
+    return {'marker_code': marker, 'marker_center_um': [xc, yc],
+            'row': row, 'column': column,
+            'sequence': match['sequence'],
+            'bottom_left_um': [x0, y0], 'top_right_um': [x0 + 50.0, y0 + 50.0]}
+
+
+def parse_anchor(stem):
+    region = parse_region(stem)
+    return np.asarray(region['bottom_left_um'], dtype=float), 'filename-region'
+
+
+def validate_region_pitch(pitch_um):
+    if not math.isfinite(pitch_um) or pitch_um != REGION_PITCH_UM:
+        raise ValueError('区域编号规范固定为 200×200 µm 内的 4×4 个 50×50 µm 小格；--pitch-um 必须为50')
 
 
 def fit_bottom_left(points,height,anchor_um,pitch_um=50.):
@@ -64,8 +79,10 @@ def fit_bottom_left(points,height,anchor_um,pitch_um=50.):
                 rms_um=float(np.sqrt(np.mean(errors**2))),max_residual_um=float(errors.max()))
 
 
-def prepare_image(raw,corrected_dir,overrides,pitch_um,max_residual_um):
-    anchor,source=parse_anchor(raw.stem,overrides)
+def prepare_image(raw,corrected_dir,pitch_um,max_residual_um):
+    validate_region_pitch(pitch_um)
+    region=parse_region(raw.stem)
+    anchor,source=parse_anchor(raw.stem)
     rp=corrected_dir/'diagnostics'/(raw.stem+'_report.json')
     ip=corrected_dir/(raw.stem+'_corrected.tif')
     raw_hash=sha256_file(raw)
@@ -119,7 +136,7 @@ def prepare_image(raw,corrected_dir,overrides,pitch_um,max_residual_um):
         raise ValueError('旋转超过 5°，请确认图像右=+X、图像上=+Y')
     image_hash=sha256_file(ip)
     identity=hashlib.sha256((raw.stem+image_hash+json.dumps(anchor.tolist())).encode()).hexdigest()[:12]
-    return dict(name=raw.stem,id='SEM_'+identity,anchor_um=anchor.tolist(),anchor_source=source,
+    return dict(name=raw.stem,id='SEM_'+identity,anchor_um=anchor.tolist(),anchor_source=source,region=region,
                 pitch_um=pitch_um,image=str(ip.resolve()),report=str(rp.resolve()),
                 raw_sha256=r['input_sha256'],corrected_sha256=image_hash,
                 width_px=width,height_px=height,centers_px=points.tolist(),**fit)
@@ -133,18 +150,15 @@ def lisp_point(value):
     return '('+' '.join('%.12g'%v for v in [*value,0.])+')'
 
 
-def export_batch(folder,*,outdir=None,overrides_path=None,pitch_um=50.,max_residual_um=.05,
+def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
                  corrected_dir=None,excluded=None):
     folder=Path(folder).resolve()
+    validate_region_pitch(pitch_um)
     if not all(math.isfinite(x) and x>0 for x in (pitch_um,max_residual_um)):
         raise ValueError('间距和误差门槛必须为正数')
     corrected_dir=Path(corrected_dir).resolve() if corrected_dir else folder/'corrected'
     outdir=Path(outdir).resolve() if outdir else corrected_dir/'cad'
     excluded=excluded or {}
-    op=Path(overrides_path) if overrides_path else folder/'cad_anchor_overrides.json'
-    overrides=json.loads(op.read_text(encoding='utf-8')) if op.exists() else {}
-    if not isinstance(overrides,dict):
-        raise ValueError('坐标覆盖文件必须为对象')
     rows,skipped=[],[]
     for raw in list_images(folder):
         # A failed current run must never reuse an older PASS report.
@@ -152,7 +166,7 @@ def export_batch(folder,*,outdir=None,overrides_path=None,pitch_um=50.,max_resid
             skipped.append(dict(name=raw.name,reason=excluded[raw.name]))
             continue
         try:
-            rows.append(prepare_image(raw,corrected_dir,overrides,pitch_um,max_residual_um))
+            rows.append(prepare_image(raw,corrected_dir,pitch_um,max_residual_um))
         except (ValueError,KeyError,TypeError,OSError) as exc:
             skipped.append(dict(name=raw.name,reason=str(exc)))
     outdir.mkdir(parents=True,exist_ok=True);(outdir/'images').mkdir(exist_ok=True)
@@ -161,15 +175,15 @@ def export_batch(folder,*,outdir=None,overrides_path=None,pitch_um=50.,max_resid
         dest=outdir/row['bundle_image'];shutil.copy2(row['image'],dest)
         if sha256_file(dest)!=row['corrected_sha256']:
             raise RuntimeError('图像复制校验失败')
-    summary=dict(schema_version=1,coordinate_unit='um',anchor='bottom-left M3',
+    summary=dict(schema_version=2,naming_convention='marker-row.column',coordinate_unit='um',anchor='bottom-left M3',
                  orientation='image-right=+X,image-up=+Y',pixel_convention='x+0.5,H-y-0.5',
                  pitch_um=pitch_um,max_residual_um=max_residual_um,images=rows,skipped=skipped)
     (outdir/'cad_manifest.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
     with (outdir/'cad_params.csv').open('w',encoding='utf-8-sig',newline='') as handle:
         writer=csv.writer(handle)
-        writer.writerow(['name','anchor_x_um','anchor_y_um','origin_x_um','origin_y_um','um_per_px','rotation_deg','width_um','height_um','rms_um','max_residual_um','layer'])
+        writer.writerow(['name','marker_code','region_row','region_column','anchor_x_um','anchor_y_um','origin_x_um','origin_y_um','um_per_px','rotation_deg','width_um','height_um','rms_um','max_residual_um','layer'])
         for r in rows:
-            writer.writerow([r['name'],*r['anchor_um'],*r['origin_um'],r['scale_um_per_px'],r['rotation_deg'],r['width_px']*r['scale_um_per_px'],r['height_px']*r['scale_um_per_px'],r['rms_um'],r['max_residual_um'],r['id']])
+            writer.writerow([r['name'],r['region']['marker_code'],r['region']['row'],r['region']['column'],*r['anchor_um'],*r['origin_um'],r['scale_um_per_px'],r['rotation_deg'],r['width_px']*r['scale_um_per_px'],r['height_px']*r['scale_um_per_px'],r['rms_um'],r['max_residual_um'],r['id']])
     data=[]
     for r in rows:
         data.append('  ('+' '.join([lisp_string(r['id']),lisp_string(r['bundle_image']),str(r['width_px']),str(r['height_px']),lisp_point(r['origin_um']),lisp_point(r['u_um']),lisp_point(r['v_um'])])+')')
@@ -188,7 +202,10 @@ def export_batch(folder,*,outdir=None,overrides_path=None,pitch_um=50.,max_resid
 4. SEMMAPCHECK 核查实际 IMAGE 的插入点、每像素向量和尺寸。
 5. 核对后另存为 DWG。遇到贴图失败时停止后续贴图。脚本不自动保存。图像为外部参照，请保留整个 cad 文件夹。
 
-文件名 (x,y)×100 是左下 M3 坐标，图像右=+X、上=+Y，间距 {pitch_um:g} µm。
+文件名采用 0303-1.4.tif：0303 为数字 marker 编号，1.4 为第1行第4列。
+marker 中心 (300,300) µm，所属小格左下 (350,350)、右上 (400,400) µm。
+行从上往下、列从左往右；图像右=+X、上=+Y，间距固定 {pitch_um:g} µm。
+旧括号坐标、r3c4 命名和坐标覆盖 JSON 不再使用。
 左下锚点严格固定，其他点拟合比例和旋转；最大单点偏差门槛 {max_residual_um:g} µm。
 像素中心转换为 (x+0.5,H-y-0.5)，插入点为图像外边界左下角。
 IMAGE 的 DXF 10/11/12 控制插入点及每像素向量，不依赖 DPI 或 INSUNITS，不更改原版图单位设置。
@@ -202,13 +219,13 @@ https://help.autodesk.com/cloudhelp/2018/ENU/OARX-RefGuide/files/OREF-AcDbRaster
 
 
 def main(argv=None):
-    p=argparse.ArgumentParser(description='文件名 (x,y)×100 µm 锚定左下十字，生成 AutoCAD 贴图包')
-    p.add_argument('folder');p.add_argument('--outdir');p.add_argument('--anchor-overrides')
+    p=argparse.ArgumentParser(description='文件名 0303-1.4.tif（marker-行.列）自动换算坐标并生成 AutoCAD 贴图包')
+    p.add_argument('folder');p.add_argument('--outdir')
     p.add_argument('--pitch-um',type=float,default=50.)
     p.add_argument('--max-residual-um',type=float,default=.05)
     a=p.parse_args(argv)
     try:
-        r=export_batch(a.folder,outdir=a.outdir,overrides_path=a.anchor_overrides,pitch_um=a.pitch_um,max_residual_um=a.max_residual_um)
+        r=export_batch(a.folder,outdir=a.outdir,pitch_um=a.pitch_um,max_residual_um=a.max_residual_um)
     except (ValueError,OSError) as exc:
         p.exit(2,str(exc)+'\n')
     print('贴图包：可用 %d 张 / 跳过 %d 张'%(len(r['images']),len(r['skipped'])))

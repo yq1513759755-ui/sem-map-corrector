@@ -4,7 +4,7 @@ from semcorr.cli import main
 from semcorr.demo import make_demo_image
 
 
-def scene(folder,name='sample(3.5,2).tif'):
+def scene(folder,name='0303-1.4.tif'):
     folder.mkdir(exist_ok=True)
     return make_demo_image(folder/name,n_rows=2,n_cols=2)
 
@@ -15,7 +15,7 @@ def test_one_command_custom_output_and_anchor(tmp_path):
     summary=json.loads((out/'workflow_summary.json').read_text())
     assert summary['ready']==1 and summary['images'][0]['status']=='ready'
     report=json.loads((out/'cad/cad_manifest.json').read_text())
-    assert report['images'][0]['anchor_um']==[350.,200.]
+    assert report['images'][0]['anchor_um']==[350.,350.]
     assert (out/'cad/sem_map.lsp').is_file()
     assert not (root/'corrected').exists()
 
@@ -59,7 +59,7 @@ def test_partial_batch_exports_good_image(tmp_path):
 
 @pytest.mark.parametrize('extra',[
     ['--grid','2x3'],['--design','not-read.json'],['--pitch-um','nan'],
-    ['--max-residual-um','0'],['--anchor-overrides','missing.json']])
+    ['--max-residual-um','0'],['--pitch-um','100']])
 def test_invalid_options_fail_before_processing(tmp_path,extra):
     root=tmp_path/'input';scene(root)
     assert main(['--batch',str(root),'--cad',*extra])==1
@@ -73,5 +73,21 @@ def test_cad_requires_batch():
 def test_original_correction_only_command_is_unchanged(tmp_path):
     root=tmp_path/'input';scene(root)
     assert main(['--batch',str(root)])==0
-    assert (root/'corrected/sample(3.5,2)_corrected.tif').is_file()
+    assert (root/'corrected/0303-1.4_corrected.tif').is_file()
     assert not (root/'corrected/cad').exists()
+
+
+def test_legacy_name_not_corrected_in_cad_mode(tmp_path):
+    root=tmp_path/'input';scene(root,'0303-02(3.5,2).tif')
+    assert main(['--batch',str(root),'--cad'])==1
+    assert not (root/'corrected/0303-02(3.5,2)_corrected.tif').exists()
+    report=json.loads((root/'corrected/workflow_summary.json').read_text())
+    assert report['ready']==0
+    assert report['images'][0]['status']=='cad_rejected'
+    assert '命名' in report['images'][0]['reason']
+
+
+def test_coordinate_overrides_option_removed():
+    with pytest.raises(SystemExit) as exc:
+        main(['--batch','unused','--cad','--anchor-overrides','unused.json'])
+    assert exc.value.code==2

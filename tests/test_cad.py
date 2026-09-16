@@ -3,27 +3,46 @@ import re
 import numpy as np
 import pytest
 import cv2
-from semcorr.cad import parse_anchor,fit_bottom_left,prepare_image,export_batch
+from semcorr.cad import parse_anchor,parse_region,fit_bottom_left,prepare_image,export_batch
 from semcorr.io import sha256_file
 
 
 @pytest.mark.parametrize('name,expected',[
- ('0303-02(3.5,2)',[350,200]),('any（-1，2.5）',[-100,250]),
- ('abc(.5,+2)',[50,200]),('3719-05(37.5,19.5)',[3750,1950])])
+ ('0303-1.4',[350,350]),('0101-3.4',[150,50]),
+ ('0101-1.1',[0,150]),('0101-4.4',[150,0]),
+ ('0303-1.4_02',[350,350])])
 def test_filename_anchor(name,expected):
     actual,source=parse_anchor(name)
     np.testing.assert_allclose(actual,expected)
-    assert source=='filename-bottom-left'
+    assert source=='filename-region'
 
 
-@pytest.mark.parametrize('name',['0115-01','3719-05(3.7.5,19.5)','a(1,2) junk','a(nan,2)'])
+@pytest.mark.parametrize('name',[
+ '0115-01','0101(3,4)','0303-02(3.5,2)','0101_r3c4_01',
+ '0303-0.1','0303-1.0','0303-5.1','0303-1.5','0303-1.40',
+ '0303-01.4','0303-1,4','303-1.4','0303-1.4junk','0303-1.4_00'])
 def test_no_silent_coordinate_guess(name):
     with pytest.raises(ValueError):parse_anchor(name)
 
 
-def test_explicit_override():
-    xy,source=parse_anchor('bad(3.7.5,2)',{'bad(3.7.5,2)':[37.5,2]})
-    np.testing.assert_allclose(xy,[3750,200]);assert source=='explicit-override'
+def test_region_metadata():
+    r=parse_region('0101-3.4')
+    assert r=={'marker_code':'0101','marker_center_um':[100.,100.],
+               'row':3,'column':4,'sequence':None,
+               'bottom_left_um':[150.,50.],'top_right_um':[200.,100.]}
+
+
+def test_all_sixteen_cells_tile_block_without_row_column_swap():
+    anchors=[]
+    for row in range(1,5):
+        for column in range(1,5):
+            region=parse_region(f'0303-{row}.{column}')
+            x,y=region['bottom_left_um']
+            assert x==[200,250,300,350][column-1]
+            assert y==[350,300,250,200][row-1]
+            assert region['top_right_um']==[x+50,y+50]
+            anchors.append((x,y))
+    assert len(set(anchors))==16
 
 
 @pytest.mark.parametrize('angle',[-2,0,3])
@@ -52,7 +71,7 @@ def test_anchor_is_exact_even_with_noisy_other_marks():
 @pytest.fixture
 def batch(tmp_path):
     folder=tmp_path/'batch';folder.mkdir();out=folder/'corrected';out.mkdir()
-    diag=out/'diagnostics';diag.mkdir();stem='0101-01(1,1)'
+    diag=out/'diagnostics';diag.mkdir();stem='0101-2.3'
     raw=folder/(stem+'.tif');cv2.imwrite(str(raw),np.full((768,1024),30,np.uint8))
     points=[[200.,100.],[700.,100.],[200.,600.],[700.,600.]]
     image=np.full((707,1024,3),50,np.uint8)
@@ -74,14 +93,14 @@ def test_reject_untrustworthy_reports(batch,change):
     if change=='hash':r['input_sha256']='wrong'
     if change=='edges':r['self_check']['marks'][0]['center_refinement']={}
     rp.write_text(json.dumps(r))
-    with pytest.raises(ValueError):prepare_image(raw,folder/'corrected',{},50,.05)
+    with pytest.raises(ValueError):prepare_image(raw,folder/'corrected',50,.05)
 
 
 def test_renamed_raw_reconnects_by_content_hash(batch):
     folder,raw,rp=batch
-    renamed=raw.with_name('0101-01(1.5,2).tif');raw.rename(renamed)
-    row=prepare_image(renamed,folder/'corrected',{},50,.05)
-    assert row['anchor_um']==[150,200]
+    renamed=raw.with_name('0101-1.4.tif');raw.rename(renamed)
+    row=prepare_image(renamed,folder/'corrected',50,.05)
+    assert row['anchor_um']==[150,150]
     assert row['report']==str(rp)
 
 
@@ -104,3 +123,20 @@ def test_full_bundle_round_trip(batch):
     assert depth==0
     saved=json.loads((bundle/'cad_manifest.json').read_text())
     assert saved['images'][0]['anchor_um']==[100,100]
+    assert saved['schema_version']==2
+    assert saved['images'][0]['region']['row']==2
+    assert saved['images'][0]['region']['column']==3
+
+
+def test_nonstandard_pitch_rejected_before_export(batch):
+    folder,raw,rp=batch
+    with pytest.raises(ValueError,match='50'):
+        export_batch(folder,pitch_um=100)
+    assert not (folder/'corrected/cad').exists()
+
+
+def test_legacy_override_file_cannot_change_new_region(batch):
+    folder,raw,rp=batch
+    (folder/'cad_anchor_overrides.json').write_text(json.dumps({raw.stem:[99,99]}))
+    report=export_batch(folder)
+    assert report['images'][0]['anchor_um']==[100,100]

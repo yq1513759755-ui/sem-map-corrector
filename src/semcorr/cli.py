@@ -21,8 +21,7 @@ def build_parser():
     parser.add_argument("--batch", metavar="目录", help="批量处理目录")
     parser.add_argument("--cad", action="store_true",
                         help="与 --batch 配合：校正后自动生成 AutoCAD 贴图包")
-    parser.add_argument("--anchor-overrides", help="CAD 左下锚点覆盖 JSON，单位为 100 µm")
-    parser.add_argument("--pitch-um", type=float, default=50., help="CAD 标记间距（µm，默认 50）")
+    parser.add_argument("--pitch-um", type=float, default=50., help="区域网格固定间距（仅支持 50 µm）")
     parser.add_argument("--max-residual-um", type=float, default=.05,
                         help="CAD 最大单点配准误差（µm，默认 0.05）")
     parser.add_argument("--design", help="M1..Mn 设计坐标 JSON")
@@ -67,12 +66,9 @@ def main(argv=None):
                 raise RuntimeError("一键 CAD 流程要求 --grid 2x2，且不使用 --design；绝对坐标从文件名读取")
             if not all(math.isfinite(v) and v > 0 for v in (args.pitch_um, args.max_residual_um)):
                 raise RuntimeError("CAD 间距和残差门槛必须为有限正数")
-            overrides = Path(args.anchor_overrides) if args.anchor_overrides else Path(args.batch) / "cad_anchor_overrides.json"
-            if args.anchor_overrides or overrides.exists():
-                with overrides.open(encoding="utf-8") as handle:
-                    if not isinstance(json.load(handle), dict):
-                        raise RuntimeError("坐标覆盖 JSON 必须为对象")
-        elif args.anchor_overrides or args.pitch_um != 50. or args.max_residual_um != .05:
+            from .cad import parse_region, validate_region_pitch
+            validate_region_pitch(args.pitch_um)
+        elif args.pitch_um != 50. or args.max_residual_um != .05:
             raise RuntimeError("CAD 参数需要同时指定 --cad")
         if args.mark_arm is not None and args.mark_arm < 0:
             raise RuntimeError("--mark-arm 不能为负数（0 = 只画中心 1 个像素）")
@@ -86,8 +82,16 @@ def main(argv=None):
             outdir = Path(args.outdir) if args.outdir else root / "corrected"
             print(f"批量处理 {len(files)} 张 SE2 图像 → {outdir}")
             failures, reviews = [], []
+            naming_errors = {}
             for index, path in enumerate(files, 1):
                 print(f"\n================ [{index}/{len(files)}] {path.name} ================")
+                if args.cad:
+                    try:
+                        parse_region(path.stem)
+                    except ValueError as exc:
+                        naming_errors[path.name] = str(exc)
+                        print(f"命名无效：{path.name}: {exc}")
+                        continue
                 try:
                     report = correct_image(path, grid=args.grid, design=args.design,
                                   outdir=outdir, affine=args.affine,
@@ -98,7 +102,7 @@ def main(argv=None):
                 except (RuntimeError, FileNotFoundError, ValueError) as exc:
                     print(f"失败：{exc}")
                     failures.append((path.name, str(exc)))
-            print(f"\n===== 批量完成：通过 {len(files) - len(failures) - len(reviews)} / 需复核 {len(reviews)} / 失败 {len(failures)} =====")
+            print(f"\n===== 批量完成：通过 {len(files) - len(failures) - len(reviews) - len(naming_errors)} / 需复核 {len(reviews)} / 失败 {len(failures)} / 命名无效 {len(naming_errors)} =====")
             for name, warnings in reviews:
                 print(f"  [需复核] {name}: {'; '.join(warnings)}")
             for name, error in failures:
@@ -109,8 +113,8 @@ def main(argv=None):
                 excluded = {name: "本次校正失败：" + error for name, error in failures}
                 excluded.update({name: "本次校正需复核：" + "; ".join(warnings)
                                  for name, warnings in reviews})
+                excluded.update(naming_errors)
                 cad = export_batch(root, corrected_dir=outdir, excluded=excluded,
-                                   overrides_path=args.anchor_overrides,
                                    pitch_um=args.pitch_um,
                                    max_residual_um=args.max_residual_um)
                 exported = {row["name"] for row in cad["images"]}
