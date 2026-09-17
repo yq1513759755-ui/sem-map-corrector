@@ -1,4 +1,4 @@
-"""AutoCAD raster placement from marker-row.column region filenames."""
+"""AutoCAD raster placement from marker-row-column-sequence region filenames."""
 from __future__ import annotations
 import argparse
 import csv
@@ -12,21 +12,21 @@ import cv2
 import numpy as np
 from .io import list_images, sha256_file
 
-REGION = re.compile(r'(?P<marker>[0-9]{4})-(?P<row>[1-4])\.(?P<col>[1-4])(?:_(?P<sequence>[0-9]{2,}))?')
+REGION = re.compile(r'(?P<marker>[0-9]{4})-(?P<row>[1-4])-(?P<col>[1-4])(?:-(?P<sequence>[0-9]+))?')
 IDS = ('M1','M2','M3','M4')
 REGION_PITCH_UM = 50.0
 
 
 def parse_region(stem):
-    """Decode aabb-row.column; rows go down, columns go right.
+    """Decode aabb-row-column[-sequence]; rows go down, columns go right.
 
     The aabb marker is the centre of a 200 um square, divided into 4x4 cells.
-    A dot separates two integer indices; it is not a decimal coordinate.
+    Hyphens separate row and column. The SEM acquisition suffix is metadata only.
     """
     match = REGION.fullmatch(stem)
-    if not match or (match['sequence'] is not None and int(match['sequence']) < 1):
-        raise ValueError('图片命名必须为 0303-1.4.tif（数字marker-行.列，行列均为1–4）；'
-                         '同格多图可加 _01 序号。旧括号坐标及 r3c4 格式已停用')
+    if not match:
+        raise ValueError('图片命名必须为 0303-1-4-01.tif（数字marker-行-列-序号，行列均为1–4）；'
+                         '末尾数字序号不参与坐标换算。旧点号、括号坐标及 r3c4 格式已停用')
     marker = match['marker']
     row, column = int(match['row']), int(match['col'])
     xc, yc = 100.0 * int(marker[:2]), 100.0 * int(marker[2:])
@@ -175,7 +175,7 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
         dest=outdir/row['bundle_image'];shutil.copy2(row['image'],dest)
         if sha256_file(dest)!=row['corrected_sha256']:
             raise RuntimeError('图像复制校验失败')
-    summary=dict(schema_version=2,naming_convention='marker-row.column',coordinate_unit='um',anchor='bottom-left M3',
+    summary=dict(schema_version=2,naming_convention='marker-row-column-sequence',coordinate_unit='um',anchor='bottom-left M3',
                  orientation='image-right=+X,image-up=+Y',pixel_convention='x+0.5,H-y-0.5',
                  pitch_um=pitch_um,max_residual_um=max_residual_um,images=rows,skipped=skipped)
     (outdir/'cad_manifest.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -202,10 +202,10 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
 4. SEMMAPCHECK 核查实际 IMAGE 的插入点、每像素向量和尺寸。
 5. 核对后另存为 DWG。遇到贴图失败时停止后续贴图。脚本不自动保存。图像为外部参照，请保留整个 cad 文件夹。
 
-文件名采用 0303-1.4.tif：0303 为数字 marker 编号，1.4 为第1行第4列。
+文件名采用 0303-1-4-01.tif：0303 为数字 marker 编号，1-4 为第1行第4列，末尾01仅为SEM图片序号。
 marker 中心 (300,300) µm，所属小格左下 (350,350)、右上 (400,400) µm。
 行从上往下、列从左往右；图像右=+X、上=+Y，间距固定 {pitch_um:g} µm。
-旧括号坐标、r3c4 命名和坐标覆盖 JSON 不再使用。
+旧点号区域编号、括号坐标、r3c4 命名和坐标覆盖 JSON 不再使用。
 左下锚点严格固定，其他点拟合比例和旋转；最大单点偏差门槛 {max_residual_um:g} µm。
 像素中心转换为 (x+0.5,H-y-0.5)，插入点为图像外边界左下角。
 IMAGE 的 DXF 10/11/12 控制插入点及每像素向量，不依赖 DPI 或 INSUNITS，不更改原版图单位设置。
@@ -219,7 +219,7 @@ https://help.autodesk.com/cloudhelp/2018/ENU/OARX-RefGuide/files/OREF-AcDbRaster
 
 
 def main(argv=None):
-    p=argparse.ArgumentParser(description='文件名 0303-1.4.tif（marker-行.列）自动换算坐标并生成 AutoCAD 贴图包')
+    p=argparse.ArgumentParser(description='文件名 0303-1-4-01.tif（marker-行-列-序号）自动换算坐标并生成 AutoCAD 贴图包')
     p.add_argument('folder');p.add_argument('--outdir')
     p.add_argument('--pitch-um',type=float,default=50.)
     p.add_argument('--max-residual-um',type=float,default=.05)

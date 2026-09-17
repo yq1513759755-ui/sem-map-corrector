@@ -8,9 +8,9 @@ from semcorr.io import sha256_file
 
 
 @pytest.mark.parametrize('name,expected',[
- ('0303-1.4',[350,350]),('0101-3.4',[150,50]),
- ('0101-1.1',[0,150]),('0101-4.4',[150,0]),
- ('0303-1.4_02',[350,350])])
+ ('0303-1-4-01',[350,350]),('0101-3-4-01',[150,50]),
+ ('0101-1-1-01',[0,150]),('0101-4-4-01',[150,0]),
+ ('0303-1-4-99',[350,350]),('0537-2-3-05',[500,3700])])
 def test_filename_anchor(name,expected):
     actual,source=parse_anchor(name)
     np.testing.assert_allclose(actual,expected)
@@ -20,15 +20,15 @@ def test_filename_anchor(name,expected):
 @pytest.mark.parametrize('name',[
  '0115-01','0101(3,4)','0303-02(3.5,2)','0101_r3c4_01',
  '0303-0.1','0303-1.0','0303-5.1','0303-1.5','0303-1.40',
- '0303-01.4','0303-1,4','303-1.4','0303-1.4junk','0303-1.4_00'])
+ '0303-01.4','0303-1,4','0303-1.4','0303-0-1-01','0303-5-1-01','0303-1-0-01','0303-1-5-01','0303-1-4-text','0303-1-4-01-extra','303-1.4','0303-1.4junk','0303-1.4_00'])
 def test_no_silent_coordinate_guess(name):
     with pytest.raises(ValueError):parse_anchor(name)
 
 
 def test_region_metadata():
-    r=parse_region('0101-3.4')
+    r=parse_region('0101-3-4-01')
     assert r=={'marker_code':'0101','marker_center_um':[100.,100.],
-               'row':3,'column':4,'sequence':None,
+               'row':3,'column':4,'sequence':'01',
                'bottom_left_um':[150.,50.],'top_right_um':[200.,100.]}
 
 
@@ -36,7 +36,7 @@ def test_all_sixteen_cells_tile_block_without_row_column_swap():
     anchors=[]
     for row in range(1,5):
         for column in range(1,5):
-            region=parse_region(f'0303-{row}.{column}')
+            region=parse_region(f'0303-{row}-{column}-01')
             x,y=region['bottom_left_um']
             assert x==[200,250,300,350][column-1]
             assert y==[350,300,250,200][row-1]
@@ -71,7 +71,7 @@ def test_anchor_is_exact_even_with_noisy_other_marks():
 @pytest.fixture
 def batch(tmp_path):
     folder=tmp_path/'batch';folder.mkdir();out=folder/'corrected';out.mkdir()
-    diag=out/'diagnostics';diag.mkdir();stem='0101-2.3'
+    diag=out/'diagnostics';diag.mkdir();stem='0101-2-3-01'
     raw=folder/(stem+'.tif');cv2.imwrite(str(raw),np.full((768,1024),30,np.uint8))
     points=[[200.,100.],[700.,100.],[200.,600.],[700.,600.]]
     image=np.full((707,1024,3),50,np.uint8)
@@ -98,7 +98,7 @@ def test_reject_untrustworthy_reports(batch,change):
 
 def test_renamed_raw_reconnects_by_content_hash(batch):
     folder,raw,rp=batch
-    renamed=raw.with_name('0101-1.4.tif');raw.rename(renamed)
+    renamed=raw.with_name('0101-1-4-01.tif');raw.rename(renamed)
     row=prepare_image(renamed,folder/'corrected',50,.05)
     assert row['anchor_um']==[150,150]
     assert row['report']==str(rp)
@@ -140,3 +140,25 @@ def test_legacy_override_file_cannot_change_new_region(batch):
     (folder/'cad_anchor_overrides.json').write_text(json.dumps({raw.stem:[99,99]}))
     report=export_batch(folder)
     assert report['images'][0]['anchor_um']==[100,100]
+
+
+@pytest.mark.parametrize('suffix',['01','05','99','100','00','0'])
+def test_sem_sequence_is_not_a_coordinate(suffix):
+    r=parse_region('0537-2-3-'+suffix)
+    assert r['row']==2 and r['column']==3
+    assert r['bottom_left_um']==[500.,3700.]
+    assert r['sequence']==suffix
+
+
+def test_sequence_optional():
+    assert parse_region('0537-2-3')['bottom_left_um']==[500.,3700.]
+
+
+def test_multiple_acquisitions_remain_distinct(batch):
+    import shutil
+    folder,raw,rp=batch
+    other=raw.with_name('0101-2-3-05.tif');shutil.copy2(raw,other)
+    r=export_batch(folder)
+    assert len(r['images'])==2
+    assert r['images'][0]['anchor_um']==r['images'][1]['anchor_um']
+    assert r['images'][0]['id']!=r['images'][1]['id']

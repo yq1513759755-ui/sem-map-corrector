@@ -4,7 +4,7 @@ from semcorr.cli import main
 from semcorr.demo import make_demo_image
 
 
-def scene(folder,name='0303-1.4.tif'):
+def scene(folder,name='0303-1-4-01.tif'):
     folder.mkdir(exist_ok=True)
     return make_demo_image(folder/name,n_rows=2,n_cols=2)
 
@@ -73,7 +73,7 @@ def test_cad_requires_batch():
 def test_original_correction_only_command_is_unchanged(tmp_path):
     root=tmp_path/'input';scene(root)
     assert main(['--batch',str(root)])==0
-    assert (root/'corrected/0303-1.4_corrected.tif').is_file()
+    assert (root/'corrected/0303-1-4-01_corrected.tif').is_file()
     assert not (root/'corrected/cad').exists()
 
 
