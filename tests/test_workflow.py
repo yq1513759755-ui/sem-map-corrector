@@ -4,7 +4,7 @@ from semcorr.cli import main
 from semcorr.demo import make_demo_image
 
 
-def scene(folder,name='0303-1-4-01.tif'):
+def scene(folder,name='0303-11-01.tif'):
     folder.mkdir(exist_ok=True)
     return make_demo_image(folder/name,n_rows=2,n_cols=2)
 
@@ -73,14 +73,15 @@ def test_cad_requires_batch():
 def test_original_correction_only_command_is_unchanged(tmp_path):
     root=tmp_path/'input';scene(root)
     assert main(['--batch',str(root)])==0
-    assert (root/'corrected/0303-1-4-01_corrected.tif').is_file()
+    assert (root/'corrected/0303-11-01_corrected.tif').is_file()
     assert not (root/'corrected/cad').exists()
 
 
-def test_legacy_name_not_corrected_in_cad_mode(tmp_path):
-    root=tmp_path/'input';scene(root,'0303-02(3.5,2).tif')
+@pytest.mark.parametrize('legacy',['0303-02(3.5,2).tif','0303-1-4-01.tif','0303-1.4.tif','0719-01.tif'])
+def test_legacy_name_not_corrected_in_cad_mode(tmp_path,legacy):
+    root=tmp_path/'input';scene(root,legacy)
     assert main(['--batch',str(root),'--cad'])==1
-    assert not (root/'corrected/0303-02(3.5,2)_corrected.tif').exists()
+    assert not (root/'corrected'/(legacy[:-4]+'_corrected.tif')).exists()
     report=json.loads((root/'corrected/workflow_summary.json').read_text())
     assert report['ready']==0
     assert report['images'][0]['status']=='cad_rejected'

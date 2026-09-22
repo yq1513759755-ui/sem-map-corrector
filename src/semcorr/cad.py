@@ -1,4 +1,4 @@
-"""AutoCAD raster placement from marker-row-column-sequence region filenames."""
+"""AutoCAD raster placement from marker-quadrant-subquadrant-sequence region filenames."""
 from __future__ import annotations
 import argparse
 import csv
@@ -12,30 +12,45 @@ import cv2
 import numpy as np
 from .io import list_images, sha256_file
 
-REGION = re.compile(r'(?P<marker>[0-9]{4})-(?P<row>[1-4])-(?P<col>[1-4])(?:-(?P<sequence>[0-9]+))?')
+REGION = re.compile(r'(?P<marker>[0-9]{4})-(?P<quadrant>[1-4])(?P<subquadrant>[1-4])(?:-(?P<sequence>[0-9]+))?')
 IDS = ('M1','M2','M3','M4')
 REGION_PITCH_UM = 50.0
+CELL_UM = REGION_PITCH_UM          # 第二级小象限 = 参与定位的 50 µm 小格
+QUADRANT_UM = 2 * CELL_UM          # 第一级象限边长 100 µm
+# 两级编号共用同一套象限约定：+X/+Y 为第 1 象限，随后逆时针 2、3、4。
+QUADRANT_SIGN_X = (1, -1, -1, 1)
+QUADRANT_SIGN_Y = (1, 1, -1, -1)
+
+
+def _axis_low(center_um, quadrant, sub_quadrant, signs):
+    """小格在该轴上的低端坐标：先取 100 µm 象限，再取其内 50 µm 半边。"""
+    outer, inner = signs[quadrant - 1], signs[sub_quadrant - 1]
+    quadrant_low = center_um if outer > 0 else center_um - QUADRANT_UM
+    return quadrant_low + (CELL_UM if inner > 0 else 0.0)
 
 
 def parse_region(stem):
-    """Decode aabb-row-column[-sequence]; rows go down, columns go right.
+    """Decode aabb-q-Q[-sequence] quadrant addressing.
 
-    The aabb marker is the centre of a 200 um square, divided into 4x4 cells.
-    Hyphens separate row and column. The SEM acquisition suffix is metadata only.
+    ``aabb`` centres a 200 um square at (100*aa, 100*bb) um. The first digit
+    selects one of the four 100 um quadrants around that centre (+X/+Y first,
+    then counter-clockwise); the second digit repeats the same quadrant split
+    at 50 um inside it. The SEM acquisition suffix is metadata only.
     """
     match = REGION.fullmatch(stem)
     if not match:
-        raise ValueError('图片命名必须为 0303-1-4-01.tif（数字marker-行-列-序号，行列均为1–4）；'
-                         '末尾数字序号不参与坐标换算。旧点号、括号坐标及 r3c4 格式已停用')
+        raise ValueError('图片命名必须为 0719-12-03.tif（marker编号-象限-小象限-序号，两级编号均为1–4）；'
+                         '象限自 +X/+Y 起逆时针编号，末尾 SEM 序号可省略；'
+                         '旧 0303-1-4-01 行-列命名、点号及括号坐标格式已停用')
     marker = match['marker']
-    row, column = int(match['row']), int(match['col'])
+    quadrant, sub_quadrant = int(match['quadrant']), int(match['subquadrant'])
     xc, yc = 100.0 * int(marker[:2]), 100.0 * int(marker[2:])
-    x0 = xc - 100.0 + 50.0 * (column - 1)
-    y0 = yc + 100.0 - 50.0 * row
+    x0 = _axis_low(xc, quadrant, sub_quadrant, QUADRANT_SIGN_X)
+    y0 = _axis_low(yc, quadrant, sub_quadrant, QUADRANT_SIGN_Y)
     return {'marker_code': marker, 'marker_center_um': [xc, yc],
-            'row': row, 'column': column,
+            'quadrant': quadrant, 'sub_quadrant': sub_quadrant,
             'sequence': match['sequence'],
-            'bottom_left_um': [x0, y0], 'top_right_um': [x0 + 50.0, y0 + 50.0]}
+            'bottom_left_um': [x0, y0], 'top_right_um': [x0 + CELL_UM, y0 + CELL_UM]}
 
 
 def parse_anchor(stem):
@@ -45,7 +60,7 @@ def parse_anchor(stem):
 
 def validate_region_pitch(pitch_um):
     if not math.isfinite(pitch_um) or pitch_um != REGION_PITCH_UM:
-        raise ValueError('区域编号规范固定为 200×200 µm 内的 4×4 个 50×50 µm 小格；--pitch-um 必须为50')
+        raise ValueError('区域编号规范固定为 200×200 µm 大区域内两级象限分出的 16 个 50×50 µm 小格；--pitch-um 必须为50')
 
 
 def fit_bottom_left(points,height,anchor_um,pitch_um=50.):
@@ -175,15 +190,16 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
         dest=outdir/row['bundle_image'];shutil.copy2(row['image'],dest)
         if sha256_file(dest)!=row['corrected_sha256']:
             raise RuntimeError('图像复制校验失败')
-    summary=dict(schema_version=2,naming_convention='marker-row-column-sequence',coordinate_unit='um',anchor='bottom-left M3',
+    summary=dict(schema_version=3,naming_convention='marker-quadrant-subquadrant-sequence',coordinate_unit='um',anchor='bottom-left M3',
+                 quadrant_convention='I=+X/+Y then counter-clockwise, 100 um then 50 um',
                  orientation='image-right=+X,image-up=+Y',pixel_convention='x+0.5,H-y-0.5',
                  pitch_um=pitch_um,max_residual_um=max_residual_um,images=rows,skipped=skipped)
     (outdir/'cad_manifest.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
     with (outdir/'cad_params.csv').open('w',encoding='utf-8-sig',newline='') as handle:
         writer=csv.writer(handle)
-        writer.writerow(['name','marker_code','region_row','region_column','anchor_x_um','anchor_y_um','origin_x_um','origin_y_um','um_per_px','rotation_deg','width_um','height_um','rms_um','max_residual_um','layer'])
+        writer.writerow(['name','marker_code','quadrant','sub_quadrant','anchor_x_um','anchor_y_um','origin_x_um','origin_y_um','um_per_px','rotation_deg','width_um','height_um','rms_um','max_residual_um','layer'])
         for r in rows:
-            writer.writerow([r['name'],r['region']['marker_code'],r['region']['row'],r['region']['column'],*r['anchor_um'],*r['origin_um'],r['scale_um_per_px'],r['rotation_deg'],r['width_px']*r['scale_um_per_px'],r['height_px']*r['scale_um_per_px'],r['rms_um'],r['max_residual_um'],r['id']])
+            writer.writerow([r['name'],r['region']['marker_code'],r['region']['quadrant'],r['region']['sub_quadrant'],*r['anchor_um'],*r['origin_um'],r['scale_um_per_px'],r['rotation_deg'],r['width_px']*r['scale_um_per_px'],r['height_px']*r['scale_um_per_px'],r['rms_um'],r['max_residual_um'],r['id']])
     data=[]
     for r in rows:
         data.append('  ('+' '.join([lisp_string(r['id']),lisp_string(r['bundle_image']),str(r['width_px']),str(r['height_px']),lisp_point(r['origin_um']),lisp_point(r['u_um']),lisp_point(r['v_um'])])+')')
@@ -202,10 +218,12 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
 4. SEMMAPCHECK 核查实际 IMAGE 的插入点、每像素向量和尺寸。
 5. 核对后另存为 DWG。遇到贴图失败时停止后续贴图。脚本不自动保存。图像为外部参照，请保留整个 cad 文件夹。
 
-文件名采用 0303-1-4-01.tif：0303 为数字 marker 编号，1-4 为第1行第4列，末尾01仅为SEM图片序号。
+文件名采用 0303-11-01.tif：0303 为数字 marker 编号，11 为象限-小象限，末尾01仅为SEM图片序号。
 marker 中心 (300,300) µm，所属小格左下 (350,350)、右上 (400,400) µm。
-行从上往下、列从左往右；图像右=+X、上=+Y，间距固定 {pitch_um:g} µm。
-旧点号区域编号、括号坐标、r3c4 命名和坐标覆盖 JSON 不再使用。
+两级编号都按数学象限约定：+X/+Y 为第1象限，逆时针依次 2、3、4；
+第一位把 200×200 µm 大区域分成 100×100 µm 象限，第二位在该象限内分成 50×50 µm 小格。
+图像右=+X、上=+Y，间距固定 {pitch_um:g} µm。
+旧行-列命名 0303-1-4-01、点号区域编号、括号坐标、r3c4 命名和坐标覆盖 JSON 不再使用。
 左下锚点严格固定，其他点拟合比例和旋转；最大单点偏差门槛 {max_residual_um:g} µm。
 像素中心转换为 (x+0.5,H-y-0.5)，插入点为图像外边界左下角。
 IMAGE 的 DXF 10/11/12 控制插入点及每像素向量，不依赖 DPI 或 INSUNITS，不更改原版图单位设置。
@@ -219,7 +237,7 @@ https://help.autodesk.com/cloudhelp/2018/ENU/OARX-RefGuide/files/OREF-AcDbRaster
 
 
 def main(argv=None):
-    p=argparse.ArgumentParser(description='文件名 0303-1-4-01.tif（marker-行-列-序号）自动换算坐标并生成 AutoCAD 贴图包')
+    p=argparse.ArgumentParser(description='文件名 0719-12-03.tif（marker编号-象限-小象限-序号）自动换算坐标并生成 AutoCAD 贴图包')
     p.add_argument('folder');p.add_argument('--outdir')
     p.add_argument('--pitch-um',type=float,default=50.)
     p.add_argument('--max-residual-um',type=float,default=.05)

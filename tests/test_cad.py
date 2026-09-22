@@ -8,41 +8,76 @@ from semcorr.io import sha256_file
 
 
 @pytest.mark.parametrize('name,expected',[
- ('0303-1-4-01',[350,350]),('0101-3-4-01',[150,50]),
- ('0101-1-1-01',[0,150]),('0101-4-4-01',[150,0]),
- ('0303-1-4-99',[350,350]),('0537-2-3-05',[500,3700])])
+ ('0719-12-03',[700,1950]),('0303-11-01',[350,350]),
+ ('0101-41-01',[150,50]),('0101-22-01',[0,150]),
+ ('0101-44-01',[150,0]),('0101-11',[150,150]),
+ ('0303-11-99',[350,350]),('0719-12',[700,1950])])
 def test_filename_anchor(name,expected):
     actual,source=parse_anchor(name)
     np.testing.assert_allclose(actual,expected)
     assert source=='filename-region'
 
 
+def test_quadrant_digits_are_not_hyphen_separated_row_column():
+    # The 0.4.1 row-column form must not be silently reinterpreted as quadrants.
+    with pytest.raises(ValueError,match='象限'):parse_anchor('0303-1-4-01')
+
+
 @pytest.mark.parametrize('name',[
- '0115-01','0101(3,4)','0303-02(3.5,2)','0101_r3c4_01',
- '0303-0.1','0303-1.0','0303-5.1','0303-1.5','0303-1.40',
- '0303-01.4','0303-1,4','0303-1.4','0303-0-1-01','0303-5-1-01','0303-1-0-01','0303-1-5-01','0303-1-4-text','0303-1-4-01-extra','303-1.4','0303-1.4junk','0303-1.4_00'])
+ '0115-01','0719-01','0101(3,4)','0303-02(3.5,2)','0101_r3c4_01',
+ '0303-1-4-01','0537-2-3-05','0501-3-1-02',
+ '0303-0.1','0303-1.0','0303-5.1','0303-1.5','0303-1.40','0303-01.4','0303-1,4','0303-1.4',
+ '0719-0-1','0719-5-1','0719-1-0','0719-1-5',
+ '0719-15','0719-05','0719-55','0719-123','0719-1','0719-12-03-extra','0719-12-text',
+ '719-12','0719-12junk','0719-12_00','0719_12','0719 12'])
 def test_no_silent_coordinate_guess(name):
     with pytest.raises(ValueError):parse_anchor(name)
 
 
 def test_region_metadata():
-    r=parse_region('0101-3-4-01')
-    assert r=={'marker_code':'0101','marker_center_um':[100.,100.],
-               'row':3,'column':4,'sequence':'01',
-               'bottom_left_um':[150.,50.],'top_right_um':[200.,100.]}
+    r=parse_region('0719-12-03')
+    assert r=={'marker_code':'0719','marker_center_um':[700.,1900.],
+               'quadrant':1,'sub_quadrant':2,'sequence':'03',
+               'bottom_left_um':[700.,1950.],'top_right_um':[750.,2000.]}
 
 
-def test_all_sixteen_cells_tile_block_without_row_column_swap():
-    anchors=[]
+def test_quadrants_tile_the_200_um_block_without_gaps():
+    cells={}
+    for quadrant in range(1,5):
+        for sub in range(1,5):
+            region=parse_region(f'0303-{quadrant}{sub}-01')
+            x,y=region['bottom_left_um']
+            assert region['top_right_um']==[x+50,y+50]
+            assert 200<=x<400 and 200<=y<400
+            cells[(x,y)]=f'{quadrant}{sub}'
+    assert len(cells)==16                      # 16 格互不重叠
+    assert {x for x,_ in cells}=={200,250,300,350}
+    assert {y for _,y in cells}=={200,250,300,350}
+
+
+def test_quadrant_numbering_runs_counter_clockwise_from_plus_x_plus_y():
+    def cell(name):return parse_region(name)['bottom_left_um']
+    assert cell('0303-11')==[350,350]          # +X,+Y 象限的右上小格
+    assert cell('0303-12')==[300,350]          # 同象限左上
+    assert cell('0303-13')==[300,300]          # 同象限左下 = marker 中心
+    assert cell('0303-14')==[350,300]          # 同象限右下
+    assert cell('0303-21')==[250,350]          # −X,+Y 象限
+    assert cell('0303-31')==[250,250]          # −X,−Y 象限
+    assert cell('0303-41')==[350,250]          # +X,−Y 象限
+
+
+def test_quadrant_codes_reach_the_same_cells_as_the_retired_row_column_grid():
+    def legacy_anchor(row,column):            # 0.4.1: X0=Xc−100+50(c−1), Y0=Yc+100−50r
+        return [300-100+50*(column-1),300+100-50*row]
+    seen=set()
     for row in range(1,5):
         for column in range(1,5):
-            region=parse_region(f'0303-{row}-{column}-01')
-            x,y=region['bottom_left_um']
-            assert x==[200,250,300,350][column-1]
-            assert y==[350,300,250,200][row-1]
-            assert region['top_right_um']==[x+50,y+50]
-            anchors.append((x,y))
-    assert len(set(anchors))==16
+            want=legacy_anchor(row,column)
+            hits=[f'{q}{s}' for q in range(1,5) for s in range(1,5)
+                  if parse_region(f'0303-{q}{s}')['bottom_left_um']==want]
+            assert len(hits)==1,(row,column,want,hits)
+            seen.add(hits[0])
+    assert len(seen)==16
 
 
 @pytest.mark.parametrize('angle',[-2,0,3])
@@ -71,7 +106,7 @@ def test_anchor_is_exact_even_with_noisy_other_marks():
 @pytest.fixture
 def batch(tmp_path):
     folder=tmp_path/'batch';folder.mkdir();out=folder/'corrected';out.mkdir()
-    diag=out/'diagnostics';diag.mkdir();stem='0101-2-3-01'
+    diag=out/'diagnostics';diag.mkdir();stem='0101-13-01'
     raw=folder/(stem+'.tif');cv2.imwrite(str(raw),np.full((768,1024),30,np.uint8))
     points=[[200.,100.],[700.,100.],[200.,600.],[700.,600.]]
     image=np.full((707,1024,3),50,np.uint8)
@@ -98,9 +133,9 @@ def test_reject_untrustworthy_reports(batch,change):
 
 def test_renamed_raw_reconnects_by_content_hash(batch):
     folder,raw,rp=batch
-    renamed=raw.with_name('0101-1-4-01.tif');raw.rename(renamed)
+    renamed=raw.with_name('0101-12-01.tif');raw.rename(renamed)
     row=prepare_image(renamed,folder/'corrected',50,.05)
-    assert row['anchor_um']==[150,150]
+    assert row['anchor_um']==[100,150]
     assert row['report']==str(rp)
 
 
@@ -123,9 +158,12 @@ def test_full_bundle_round_trip(batch):
     assert depth==0
     saved=json.loads((bundle/'cad_manifest.json').read_text())
     assert saved['images'][0]['anchor_um']==[100,100]
-    assert saved['schema_version']==2
-    assert saved['images'][0]['region']['row']==2
-    assert saved['images'][0]['region']['column']==3
+    assert saved['schema_version']==3
+    assert saved['naming_convention']=='marker-quadrant-subquadrant-sequence'
+    assert saved['images'][0]['region']['quadrant']==1
+    assert saved['images'][0]['region']['sub_quadrant']==3
+    csv_header=(bundle/'cad_params.csv').read_text(encoding='utf-8-sig').splitlines()[0]
+    assert csv_header.split(',')[2:4]==['quadrant','sub_quadrant']
 
 
 def test_nonstandard_pitch_rejected_before_export(batch):
@@ -144,20 +182,20 @@ def test_legacy_override_file_cannot_change_new_region(batch):
 
 @pytest.mark.parametrize('suffix',['01','05','99','100','00','0'])
 def test_sem_sequence_is_not_a_coordinate(suffix):
-    r=parse_region('0537-2-3-'+suffix)
-    assert r['row']==2 and r['column']==3
-    assert r['bottom_left_um']==[500.,3700.]
+    r=parse_region('0719-12-'+suffix)
+    assert r['quadrant']==1 and r['sub_quadrant']==2
+    assert r['bottom_left_um']==[700.,1950.]
     assert r['sequence']==suffix
 
 
 def test_sequence_optional():
-    assert parse_region('0537-2-3')['bottom_left_um']==[500.,3700.]
+    assert parse_region('0719-12')['bottom_left_um']==[700.,1950.]
 
 
 def test_multiple_acquisitions_remain_distinct(batch):
     import shutil
     folder,raw,rp=batch
-    other=raw.with_name('0101-2-3-05.tif');shutil.copy2(raw,other)
+    other=raw.with_name('0101-13-05.tif');shutil.copy2(raw,other)
     r=export_batch(folder)
     assert len(r['images'])==2
     assert r['images'][0]['anchor_um']==r['images'][1]['anchor_um']
