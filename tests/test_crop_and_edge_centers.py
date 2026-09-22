@@ -54,7 +54,9 @@ def test_unequal_arms_with_noise_and_rotation_have_known_center(angle):
     candidate={'cx':truth[0]-2,'cy':truth[1]+1,'span':120,'arm_ratio':.1}
     x,y,_=refine_center(image,candidate)
     assert candidate['center_refinement']['method']=='arm-edges'
-    assert np.linalg.norm([x-truth[0],y-truth[1]])<.2
+    assert candidate['center_refinement']['edge_interp']=='hard-step-or-smooth-hybrid'
+    assert candidate['center_refinement']['midline_fit']=='contrast-width-weighted'
+    assert np.linalg.norm([x-truth[0],y-truth[1]])<.12
 
 
 def test_mismatched_small_template_does_not_shift_large_cross_center():
@@ -68,6 +70,79 @@ def test_mismatched_small_template_does_not_shift_large_cross_center():
     x,y,_=refine_center(image,candidate)
     assert candidate['center_refinement']['method']=='arm-edges'
     assert np.hypot(x-cx,y-cy)<.2
+
+
+def test_edge_crossing_noise_and_curvature():
+    """Near-linear noisy flank: 3-point line beats 2-point. Curved flank: parabolic wins."""
+    from semcorr.detectors.edges import (
+        _edge_crossing, _linear3_crossing, _parabolic_crossing,
+    )
+
+    true_edge = 20.37
+    level = 100.0
+    slope = 12.0
+    xs = np.arange(12, 30, dtype=float)
+    # Level is attained exactly at true_edge.
+    clean = level + slope * (xs - true_edge)
+    i_true = int(np.floor(true_edge)) - int(xs[0])
+    assert clean[i_true] < level <= clean[i_true + 1]
+    # _edge_crossing works in profile-index space (xs[0] == 12).
+    true_index = true_edge - xs[0]
+    errs_h, errs_l2 = [], []
+    for k in range(40):
+        p = clean + np.random.default_rng(100 + k).normal(0, 3.0, clean.shape)
+        x_h = _edge_crossing(p, i_true, level, rising=True)
+        x_2 = i_true + (level - p[i_true]) / (p[i_true + 1] - p[i_true])
+        errs_h.append(abs(x_h - true_index))
+        errs_l2.append(abs(x_2 - true_index))
+    assert np.mean(errs_h) < np.mean(errs_l2)
+    assert np.mean(errs_h) < 0.15
+
+    # Clearly curved (asymmetric) flank: parabolic root is closer than 3-pt line.
+    p0, p1, p2 = 10.0, 30.0, 80.0
+    level_c = 45.0
+    x_par = _parabolic_crossing(p0, p1, p2, 1, level_c)
+    x_lin = _linear3_crossing(p0, p1, p2, 1, level_c)
+    # Mid-centered quadratic through the three samples: 15 t^2 + 35 t - 15 = 0
+    # root t ≈ 0.3699 → x = 1.3699.
+    assert abs(x_par - 1.3699) < 0.01
+    assert abs(x_par - 1.3699) < abs(x_lin - 1.3699)
+
+    # Hard step: 2-point linear must be used (3-point would be biased).
+    step = np.array([30.0, 30.0, 30.0, 200.0, 200.0, 200.0])
+    x_step = _edge_crossing(step, 2, 115.0, rising=True)
+    assert abs(x_step - (2 + (115.0 - 30.0) / 170.0)) < 1e-9
+
+
+def test_width_outlier_is_downweighted_in_midline():
+    """A bright blob with abnormal width on one row must not drag the midline."""
+    from semcorr.detectors.edges import _midline, _profile_weight
+
+    size = 200
+    cx, cy = 100.0, 100.0
+    scale = 4
+    yy, xx = np.mgrid[:size * scale, :size * scale]
+    xx = xx / scale - cx
+    yy = yy / scale - cy
+    mask = ((np.abs(xx) <= 2.5) & (np.abs(yy) <= 55)) | ((np.abs(yy) <= 2.5) & (np.abs(xx) <= 55))
+    image = cv2.resize(
+        np.where(mask, 200.0, 35.0).astype(np.float32),
+        (size, size), interpolation=cv2.INTER_AREA,
+    )
+    image = cv2.GaussianBlur(image, (5, 5), 0.7).astype(np.float64)
+    clean = _midline(image, cx, cy, 110)
+    assert clean is not None
+
+    row = int(round(cy)) - 20
+    contaminated = image.copy()
+    contaminated[row, :] = 35.0
+    contaminated[row, int(cx) + 8:int(cx) + 28] = 220.0  # width ~20 px vs median ~6
+    assert _profile_weight(20.0, 185.0, 6.0) == 0.0
+
+    dirty = _midline(contaminated, cx, cy, 110)
+    assert dirty is not None
+    # Contamination must not move the axis (width outlier gets zero weight).
+    assert abs(dirty[1] - clean[1]) < 0.05
 
 
 @pytest.mark.parametrize('kind',['uniform','disk','missing-arm'])
