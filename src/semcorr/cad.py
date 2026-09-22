@@ -197,7 +197,7 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
     (outdir/'cad_manifest.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
     with (outdir/'cad_params.csv').open('w',encoding='utf-8-sig',newline='') as handle:
         writer=csv.writer(handle)
-        writer.writerow(['name','marker_code','quadrant','sub_quadrant','anchor_x_um','anchor_y_um','origin_x_um','origin_y_um','um_per_px','rotation_deg','width_um','height_um','rms_um','max_residual_um','layer'])
+        writer.writerow(['name','marker_code','quadrant','sub_quadrant','anchor_x_um','anchor_y_um','origin_x_um','origin_y_um','um_per_px','rotation_deg','width_um','height_um','rms_um','max_residual_um','image_id'])
         for r in rows:
             writer.writerow([r['name'],r['region']['marker_code'],r['region']['quadrant'],r['region']['sub_quadrant'],*r['anchor_um'],*r['origin_um'],r['scale_um_per_px'],r['rotation_deg'],r['width_px']*r['scale_um_per_px'],r['height_px']*r['scale_um_per_px'],r['rms_um'],r['max_residual_um'],r['id']])
     data=[]
@@ -214,7 +214,7 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
 
 1. 在版图副本的模型空间工作。1 个绘图单位代表 1 µm。
 2. APPLOAD 加载本目录 sem_map.lsp，先输入 SEMMAPONE 试贴第一张，再输入 SEMMAP 批量贴图；或 SCRIPT 选择 attach_all.scr。
-3. 每张图独立 SEM_ 图层。重复运行跳过已存在的图层，不重复贴图。
+3. **不新建图层**：所有 IMAGE 放在 `0` 层。重复运行按图像文件名识别已贴图，不重复插入。
 4. SEMMAPCHECK 核查实际 IMAGE 的插入点、每像素向量和尺寸。
 5. 核对后另存为 DWG。遇到贴图失败时停止后续贴图。脚本不自动保存。图像为外部参照，请保留整个 cad 文件夹。
 

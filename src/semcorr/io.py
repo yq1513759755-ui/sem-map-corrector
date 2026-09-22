@@ -68,6 +68,43 @@ def sha256_file(path: str | os.PathLike[str]) -> str:
     return digest.hexdigest()
 
 
+def find_passing_report(corrected_dir, stem, input_sha256):
+    """Return (report, report_path, corrected_image) for a reusable PASS result.
+
+    Prefers ``diagnostics/<stem>_report.json``; a renamed raw file can still
+    reconnect through the unique matching ``input_sha256``. Requires PASS plus
+    the on-disk corrected image — never a bare report.
+    """
+    corrected_dir = Path(corrected_dir)
+    diag = corrected_dir / "diagnostics"
+    if not diag.is_dir() or not input_sha256:
+        return None
+    candidates = []
+    direct = diag / f"{stem}_report.json"
+    if direct.is_file():
+        candidates.append(direct)
+    for path in sorted(diag.glob("*_report.json")):
+        if path not in candidates:
+            candidates.append(path)
+    hits = []
+    for report_path in candidates:
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if report.get("input_sha256") != input_sha256:
+            continue
+        if report.get("quality_status") != "PASS":
+            return None
+        base = report_path.name[: -len("_report.json")]
+        image = corrected_dir / f"{base}_corrected.tif"
+        if image.is_file():
+            hits.append((report, report_path, image))
+        if report_path == direct:
+            return (report, report_path, image) if image.is_file() else None
+    return hits[0] if len(hits) == 1 else None
+
+
 def pick_image_dialog() -> str:
     try:
         import tkinter as tk

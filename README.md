@@ -55,13 +55,19 @@ SEMCORR_PYTHON=/path/to/python ./semcorr --help
 `(x,y)` 括号坐标和 `r3c4` 格式；不再读取坐标覆盖 JSON。** 完全没有区域字段的
 `0719-01.tif` 无法确定 16 格中的哪一格，同样报错跳过，不会按整块 200×200 µm 处理。
 无效文件名在一键流程开始检测该图之前报告并跳过。
-仅做图像校正、不带 `--cad` 时，文件名仍可自由命名。
+仅做图像校正（`--no-cad`）时，文件名仍可自由命名。
 
 ### 3. 一条命令完成校正与贴图包生成
 
 ```bash
-./semcorr --batch "/path/to/annotated_images" --cad
+./semcorr --batch "/path/to/annotated_images"
 ```
+
+批量默认**顺带生成 AutoCAD 贴图包**；只要校正、不要贴图包时加 `--no-cad`。
+旧写法 `--cad` 仍接受，等价于默认行为。
+
+**增量重跑**：若 `corrected/` 已有同内容（SHA256）的 PASS 报告，直接跳过校正、
+只补新图/改动图/失败图。要全部重算加 `--force`。
 
 结果写入该图片目录的 `corrected/`：
 
@@ -87,7 +93,7 @@ corrected/
 3. `SEMMAP` 批量贴图，`SEMMAPCHECK` 检查实际图像变换。
 4. 核对后另存 DWG，并保留 `cad/images/`；图像是外部参照。
 
-每张图片使用独立 `SEM_` 图层；同一贴图包重复运行时检查已有图像，避免重复插入。
+每张图片落在 `0` 层（**不新建** `SEM_` 图层）；同一贴图包重复运行时按图像文件名识别已有 IMAGE，避免重复插入。
 程序不自动打开、控制或保存 AutoCAD 图形。配准残差不是实际曝光套刻精度。
 
 ## 其他常用入口
@@ -108,7 +114,7 @@ corrected/
 改变输出目录或 CAD 单点误差门槛（区域间距固定为 50 µm）：
 
 ```bash
-./semcorr --batch image_folder --cad --outdir output_folder \
+./semcorr --batch image_folder --outdir output_folder \
   --pitch-um 50 --max-residual-um 0.05
 ```
 

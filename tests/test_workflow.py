@@ -11,7 +11,7 @@ def scene(folder,name='0303-11-01.tif'):
 
 def test_one_command_custom_output_and_anchor(tmp_path):
     root=tmp_path/'input';scene(root);out=tmp_path/'custom'
-    assert main(['--batch',str(root),'--cad','--outdir',str(out)])==0
+    assert main(['--batch',str(root),'--outdir',str(out)])==0
     summary=json.loads((out/'workflow_summary.json').read_text())
     assert summary['ready']==1 and summary['images'][0]['status']=='ready'
     report=json.loads((out/'cad/cad_manifest.json').read_text())
@@ -20,9 +20,34 @@ def test_one_command_custom_output_and_anchor(tmp_path):
     assert not (root/'corrected').exists()
 
 
+def test_batch_defaults_to_cad_without_flag(tmp_path):
+    root=tmp_path/'input';scene(root)
+    assert main(['--batch',str(root)])==0
+    assert (root/'corrected/cad/sem_map.lsp').is_file()
+    assert (root/'corrected/workflow_summary.json').is_file()
+
+
+def test_directory_positional_is_batch(tmp_path):
+    root=tmp_path/'input';scene(root)
+    assert main([str(root)])==0
+    assert (root/'corrected/cad/sem_map.lsp').is_file()
+
+
+def test_no_cad_skips_bundle(tmp_path):
+    root=tmp_path/'input';scene(root)
+    assert main(['--batch',str(root),'--no-cad'])==0
+    assert (root/'corrected/0303-11-01_corrected.tif').is_file()
+    assert not (root/'corrected/cad').exists()
+
+
+def test_cad_and_no_cad_conflict(tmp_path):
+    root=tmp_path/'input';scene(root)
+    assert main(['--batch',str(root),'--cad','--no-cad'])==1
+
+
 def test_current_failure_cannot_reuse_old_pass(tmp_path,monkeypatch):
     root=tmp_path/'input';scene(root)
-    args=['--batch',str(root),'--cad']
+    args=['--batch',str(root),'--force']
     assert main(args)==0
     from semcorr import pipeline
     def fail(*args,**kwargs):raise RuntimeError('current-run failure')
@@ -33,6 +58,44 @@ def test_current_failure_cannot_reuse_old_pass(tmp_path,monkeypatch):
     assert 'current-run failure' in report['skipped'][0]['reason']
     summary=json.loads((root/'corrected/workflow_summary.json').read_text())
     assert summary['images'][0]['status']=='correction_failed'
+
+
+def test_incremental_skips_unchanged_pass(tmp_path,monkeypatch):
+    root=tmp_path/'input';scene(root)
+    assert main(['--batch',str(root)])==0
+    from semcorr import pipeline
+    def boom(*a,**k):
+        raise AssertionError('should not re-correct unchanged PASS')
+    monkeypatch.setattr(pipeline,'correct_image',boom)
+    assert main(['--batch',str(root)])==0
+    assert (root/'corrected/cad/sem_map.lsp').is_file()
+    assert (root/'corrected/workflow_summary.json').is_file()
+
+
+def test_force_reruns_even_when_pass_exists(tmp_path,monkeypatch):
+    root=tmp_path/'input';scene(root)
+    assert main(['--batch',str(root)])==0
+    from semcorr import pipeline
+    calls=[]
+    real=pipeline.correct_image
+    def counted(*a,**k):
+        calls.append(1)
+        return real(*a,**k)
+    monkeypatch.setattr(pipeline,'correct_image',counted)
+    assert main(['--batch',str(root),'--force'])==0
+    assert len(calls)==1
+
+
+def test_incremental_reuses_renamed_file_by_hash(tmp_path):
+    root=tmp_path/'input';scene(root)
+    assert main(['--batch',str(root)])==0
+    src=root/'0303-11-01.tif'
+    dst=root/'0303-12-01.tif'
+    src.rename(dst)
+    assert main(['--batch',str(root)])==0
+    # New name still exports via hash reconnect of the old PASS report.
+    report=json.loads((root/'corrected/cad/cad_manifest.json').read_text())
+    assert report['images'] and report['images'][0]['raw_sha256']
 
 
 def test_review_is_excluded_and_identified(tmp_path,monkeypatch):
@@ -72,7 +135,7 @@ def test_cad_requires_batch():
 
 def test_original_correction_only_command_is_unchanged(tmp_path):
     root=tmp_path/'input';scene(root)
-    assert main(['--batch',str(root)])==0
+    assert main(['--batch',str(root),'--no-cad'])==0
     assert (root/'corrected/0303-11-01_corrected.tif').is_file()
     assert not (root/'corrected/cad').exists()
 

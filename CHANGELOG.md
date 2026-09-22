@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1
+
+- `semcorr --batch` **默认生成 AutoCAD 贴图包**，不必再写 `--cad`；`--cad` 仍接受。
+- 新增 `--no-cad`：只校正不导出贴图包，文件名可不按区域编号。
+- **增量重跑**：原图 SHA256 未变且已有 PASS 时跳过校正；`--force` 强制全量重算。失败/需复核仍不借用历史 PASS。
+- 批量结束自动写批次质检 `batch_qc.html/csv/json` 与邻格一致性 `neighbor_checks.csv`；`--qc-only` 可对已有 `corrected/` 单独出报告，`--neighbor-tol-um` 默认 0.05 µm。
+- 位置参数传入目录时自动视为 `--batch`。
+- 可选 `--dxf`：用 ezdxf 把 SEM 图按 10/11/12 向量写入 DXF 模板并另存 **DXF 2018**（默认 `~/PhD/dxf-gds/RAW/Marker.dxf` → `~/PhD/dxf-gds/DXF/<批次名>.dxf`）；`--dxf-template` / `--dxf-outdir` 可覆盖。默认工作流不变。
+- **贴图不建独立图层**：LISP 与 `--dxf` 的 IMAGE 一律放在 `0` 层；重复检测改按图像文件名，`cad_params.csv` 的 `layer` 列改为 `image_id`。
+
 ## 0.5.0
 
 - 区域命名中间字段改为**两级象限编号**：`数字marker编号-象限-小象限-序号.tif`，例如 `0719-12-03.tif`。
