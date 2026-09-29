@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2
+
+- **贴图层改为 `photo`**：LISP 与 `--dxf` 的 IMAGE 一律放在 `photo` 层；图层不存在时自动创建，不再使用 `0` 层。
+
 ## 0.5.1
 
 - `semcorr --batch` **默认生成 AutoCAD 贴图包**，不必再写 `--cad`；`--cad` 仍接受。

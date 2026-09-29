@@ -214,7 +214,7 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
 
 1. 在版图副本的模型空间工作。1 个绘图单位代表 1 µm。
 2. APPLOAD 加载本目录 sem_map.lsp，先输入 SEMMAPONE 试贴第一张，再输入 SEMMAP 批量贴图；或 SCRIPT 选择 attach_all.scr。
-3. **不新建图层**：所有 IMAGE 放在 `0` 层。重复运行按图像文件名识别已贴图，不重复插入。
+3. 所有 IMAGE 放在 `photo` 层（不存在则自动创建，不建每图一层）。重复运行按图像文件名识别已贴图，不重复插入。
 4. SEMMAPCHECK 核查实际 IMAGE 的插入点、每像素向量和尺寸。
 5. 核对后另存为 DWG。遇到贴图失败时停止后续贴图。脚本不自动保存。图像为外部参照，请保留整个 cad 文件夹。
 

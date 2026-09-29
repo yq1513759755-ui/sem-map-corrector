@@ -18,6 +18,8 @@ import ezdxf
 # Personal defaults (override with --dxf-template / --dxf-outdir).
 DEFAULT_TEMPLATE = Path("~/PhD/dxf-gds/RAW/Marker.dxf").expanduser()
 DEFAULT_OUTDIR = Path("~/PhD/dxf-gds/DXF").expanduser()
+# All SEM underlays share one layer (created if the template lacks it).
+IMAGE_LAYER = "photo"
 
 
 def _require_ezdxf():
@@ -72,6 +74,8 @@ def export_dxf_from_cad(cad_dir, *, template, outdir, name=None):
             raise RuntimeError(f"无法将模板升级为 DXF 2018: {exc}") from exc
 
     msp = doc.modelspace()
+    if IMAGE_LAYER not in doc.layers:
+        doc.layers.add(IMAGE_LAYER)
     inserted = []
     for row in images:
         bundle = cad_dir / row["bundle_image"]
@@ -91,7 +95,7 @@ def export_dxf_from_cad(cad_dir, *, template, outdir, name=None):
             insert=(origin[0], origin[1], 0.0),
             size_in_units=(width * scale, height * scale),
             rotation=rotation,
-            dxfattribs={"layer": "0"},
+            dxfattribs={"layer": IMAGE_LAYER},
         )
         # Same as sem_map.lsp: explicit outer origin + per-pixel vectors (10/11/12).
         image.dxf.insert = (float(origin[0]), float(origin[1]), 0.0)

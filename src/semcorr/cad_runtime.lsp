@@ -1,11 +1,15 @@
 ; SEM raster placement. No COM/ActiveX: works in full AutoCAD on Mac/Windows.
 ; Generated data: (image-name relative-image width height origin u-vector v-vector).
-; Images are placed on layer "0" (no per-image layers are created).
+; Images are placed on layer "photo" (created if missing; no per-image layers).
 (defun semmap-restore (saved)
   (foreach entry saved (setvar (car entry) (cdr entry))))
 
 (defun semmap-near (a b tolerance)
   (and a b (equal a b tolerance)))
+
+(defun semmap-ensure-photo-layer ()
+  (if (not (tblsearch "LAYER" "photo"))
+    (command "_.-LAYER" "_Make" "photo" "")))
 
 (defun semmap-imagedef-filename (entity / data def)
   (setq data (entget entity))
@@ -45,7 +49,7 @@
                (= (cdr (assoc 0 (entget entity))) "IMAGE"))
         (progn
           (setq data (entget entity))
-          (setq data (subst (cons 8 "0") (assoc 8 data) data))
+          (setq data (subst (cons 8 "photo") (assoc 8 data) data))
           (setq data (subst (cons 10 (nth 4 row)) (assoc 10 data) data))
           (setq data (subst (cons 11 (nth 5 row)) (assoc 11 data) data))
           (setq data (subst (cons 12 (nth 6 row)) (assoc 12 data) data))
@@ -91,13 +95,14 @@
       (if (findfile (strcat semmap-root (cadr (car rows))))
         (progn
           (setvar "FILEDIA" 0) (setvar "OSMODE" 0) (setvar "CMDECHO" 0)
+          (semmap-ensure-photo-layer)
           (setq total (length rows) good 0 failed nil)
           (foreach row rows
             (if (not failed)
               (if (semmap-place row) (setq good (1+ good)) (setq failed T))))
           (semmap-restore saved)
           (command "_.REGEN")
-          (princ (strcat "\nSEMMAP: " (itoa good) "/" (itoa total) " verified; layer 0 only; 1 drawing unit = 1 um. Drawing not saved.")))
+          (princ (strcat "\nSEMMAP: " (itoa good) "/" (itoa total) " verified; layer photo only; 1 drawing unit = 1 um. Drawing not saved.")))
         (princ "\nBundle images not found; nothing placed."))))
   (princ))
 
@@ -113,5 +118,5 @@
       (princ (strcat "\nCHECK FAILED: " (car row)))))
   (princ (strcat "\nSEMMAPCHECK: " (itoa good) "/" (itoa total) " IMAGE transforms verified."))
   (princ))
-(princ "\nLoaded SEM map (layer 0). Run SEMMAPONE first, SEMMAP for all, SEMMAPCHECK to verify.")
+(princ "\nLoaded SEM map (layer photo). Run SEMMAPONE first, SEMMAP for all, SEMMAPCHECK to verify.")
 (princ)

@@ -52,7 +52,8 @@ def test_export_dxf_writes_r2018_with_pixel_vectors(tmp_path):
     assert tuple(image.dxf.insert)[:2] == (10.0, 20.0)
     assert tuple(image.dxf.u_pixel)[:2] == pytest.approx((0.1, 0.0))
     assert tuple(image.dxf.v_pixel)[:2] == pytest.approx((0.0, 0.1))
-    assert image.dxf.layer == "0"
+    assert image.dxf.layer == "photo"
+    assert "photo" in loaded.layers
     defs = list(loaded.objects.query("IMAGEDEF"))
     assert defs and "SEM_test.tif" in defs[0].dxf.filename
 
