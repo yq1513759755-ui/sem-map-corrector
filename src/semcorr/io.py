@@ -60,6 +60,48 @@ def write_image(path: str | os.PathLike[str], image: np.ndarray) -> None:
         raise RuntimeError(f"图像写入失败: {path}")
 
 
+def atomic_write_text(path: str | os.PathLike[str], text: str,
+                      encoding: str = "utf-8") -> None:
+    """Write ``text`` so that ``path`` is never observed half-written.
+
+    The content goes to a sibling temporary file first and is then swapped in
+    with :func:`os.replace`, which is atomic on the same filesystem. A crash
+    mid-write leaves the previous file intact instead of a truncated one.
+    """
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with tmp.open("w", encoding=encoding, newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def atomic_write_bytes(path: str | os.PathLike[str], data: bytes) -> None:
+    """Byte-string counterpart of :func:`atomic_write_text`."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with tmp.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def sha256_file(path: str | os.PathLike[str]) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:

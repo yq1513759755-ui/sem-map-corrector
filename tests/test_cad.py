@@ -238,3 +238,54 @@ def test_stale_bundle_images_are_removed(batch):
     names=sorted(p.name for p in images.glob('SEM_*.tif'))
     assert 'SEM_staleold.tif' not in names
     assert len(names)==1
+
+
+def test_manifest_never_references_missing_images(batch, monkeypatch):
+    """崩溃在"拷新图"与"写 manifest"之间时，旧 manifest 仍须可加载。
+
+    旧顺序先删旧图、后写 manifest，崩溃会让 manifest 指向已删除的文件。
+    """
+    import semcorr.cad as cad_mod
+    folder,raw,rp=batch
+    first=export_batch(folder)
+    old_bundle=first['images'][0]['bundle_image']
+    assert (folder/'corrected/cad'/old_bundle).is_file()
+
+    # Rename so the next run produces a different bundle id.
+    raw.rename(raw.with_name('0101-22-01.tif'))
+
+    real=cad_mod.atomic_write_text
+    def boom(*a,**k):
+        raise RuntimeError('simulated crash before manifest write')
+    monkeypatch.setattr(cad_mod,'atomic_write_text',boom)
+    with pytest.raises(RuntimeError):
+        export_batch(folder)
+    monkeypatch.setattr(cad_mod,'atomic_write_text',real)
+
+    # The manifest is still the old one and its image must still exist.
+    manifest=json.loads((folder/'corrected/cad/cad_manifest.json').read_text())
+    for row in manifest['images']:
+        assert (folder/'corrected/cad'/row['bundle_image']).is_file(), \
+            "manifest 不得指向已删除的图像"
+
+
+def test_stale_images_removed_only_after_manifest_committed(batch):
+    """manifest 写成功后才清理旧图；新 manifest 引用的图必须都在。"""
+    folder,raw,rp=batch
+    export_batch(folder)
+    images=folder/'corrected/cad/images'
+    (images/'SEM_staleold.tif').write_bytes(b'stale')
+    result=export_batch(folder)
+    assert 'SEM_staleold.tif' not in [p.name for p in images.glob('*.tif')]
+    for row in result['images']:
+        assert (folder/'corrected/cad'/row['bundle_image']).is_file()
+
+
+def test_atomic_write_leaves_no_temp_and_preserves_old_content(tmp_path):
+    from semcorr.io import atomic_write_text
+    target=tmp_path/'f.json'
+    atomic_write_text(target,'{"a": 1}')
+    assert target.read_text()=='{"a": 1}'
+    atomic_write_text(target,'{"a": 2}')
+    assert target.read_text()=='{"a": 2}'
+    assert not list(tmp_path.glob('*.tmp'))

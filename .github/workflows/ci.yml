@@ -8,10 +8,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # macOS is the primary platform (./semcorr launcher, SEMCORR_PYTHON), so it
+    # is exercised alongside Linux. Windows is intentionally out of scope.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v5
@@ -22,6 +25,18 @@ jobs:
         # `dxf` is an optional runtime extra, but the test suite imports ezdxf
         # (tests/test_dxf_export.py, tests/test_wires.py). Without it, pytest
         # aborts at collection and no test runs at all.
-        run: python -m pip install -e '.[test,dxf]'
+        run: python -m pip install -e '.[test,dxf]' pytest-cov
       - name: Test
-        run: python -m pytest tests/ -q
+        # Coverage is reported on every runner but only gated once: the matrix
+        # is 6 combinations and a per-cell floor would fail the same way six
+        # times for one real regression.
+        run: |
+          python -m pytest tests/ -q \
+            --cov=semcorr --cov-report=term-missing --cov-report=xml
+      - name: Coverage gate
+        # Measured coverage is ~87% (higher in CI, where the dxf extra is
+        # installed). The floor guards against silent coverage collapse; it is
+        # gated once rather than per matrix cell so one regression reports once.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          python -m pytest tests/ -q --cov=semcorr --cov-fail-under=85

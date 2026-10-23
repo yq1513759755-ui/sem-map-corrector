@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path
 import cv2
 import numpy as np
-from .io import list_images, sha256_file
+from .io import atomic_write_text, list_images, sha256_file
 from .wires import (WIRE_EXTEND_UM, WIRE_WIDTH_UM, detect_wires_in_corrected,
                     draw_wire_overlay)
 
@@ -225,16 +225,10 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
         except (ValueError,KeyError,TypeError,OSError,cv2.error) as exc:
             skipped.append(dict(name=raw.name,reason=str(exc)))
     outdir.mkdir(parents=True,exist_ok=True);(outdir/'images').mkdir(exist_ok=True)
-    # Drop bundle images left over from earlier batches: the manifest only
-    # lists this run's rows, so stale TIFFs would otherwise accumulate forever
-    # (one per content hash) and cannot be told apart from live references.
-    keep={row['id'] for row in rows}
-    for stale in (outdir/'images').glob('SEM_*.tif'):
-        if stale.stem not in keep:
-            try:
-                stale.unlink()
-            except OSError:
-                pass
+    # Write order matters: every file the manifest references must already be
+    # on disk before the manifest is swapped in, and stale images may only be
+    # removed AFTER the new manifest lands. Otherwise a crash in between leaves
+    # an old manifest pointing at deleted images (AutoCAD then loads nothing).
     for row in rows:
         row['bundle_image']='images/'+row['id']+'.tif'
         dest=outdir/row['bundle_image'];shutil.copy2(row['image'],dest)
@@ -247,7 +241,17 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
                  wire_width_um=wire_width_um,wire_extend_um=wire_extend_um,
                  n_wires=sum(len(r['wires']) for r in rows),
                  images=rows,skipped=skipped)
-    (outdir/'cad_manifest.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
+    atomic_write_text(outdir/'cad_manifest.json',
+                      json.dumps(summary,ensure_ascii=False,indent=2))
+    # Manifest is committed: now it is safe to drop images it does not list.
+    # Without this the bundle accumulates one TIFF per content hash forever.
+    keep={row['id'] for row in rows}
+    for stale in (outdir/'images').glob('SEM_*.tif'):
+        if stale.stem not in keep:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
     with (outdir/'cad_params.csv').open('w',encoding='utf-8-sig',newline='') as handle:
         writer=csv.writer(handle)
         writer.writerow(['name','marker_code','quadrant','sub_quadrant','anchor_x_um','anchor_y_um','origin_x_um','origin_y_um','um_per_px','rotation_deg','width_um','height_um','rms_um','max_residual_um','image_id'])

@@ -1,5 +1,24 @@
 # Changelog
 
+## 未发布
+
+### 修复
+
+- **贴图包写入顺序**：`export_batch` 改为「先拷图像 → 原子写 manifest → 最后删旧图」。
+  此前（0.6.1）先删旧图再写 manifest，若在两者之间中断，旧 manifest 会指向已删除的
+  图像，AutoCAD 加载时找不到文件。现在任何时刻 manifest 引用的文件都存在于磁盘。
+- **新增原子写工具**：`io.atomic_write_text` / `atomic_write_bytes` 用
+  `tmp + fsync + os.replace`，崩溃时保留旧内容而不是留下截断文件；失败自动清理临时文件。
+  `cad_manifest.json` 已改用原子写。
+
+### 工程
+
+- **CI 增加 macOS 矩阵**：`os: [ubuntu-latest, macos-latest]` × Python 3.11/3.12/3.13。
+  macOS 是 README 声明的主要使用平台，此前完全没有 CI 覆盖。
+- **CI 增加覆盖率报告与门禁**：每次运行输出 `--cov-report=term-missing`，并在
+  ubuntu + 3.12 这一个组合上执行 `--cov-fail-under=85`（实测覆盖率约 87%）。
+  `pytest-cov` 加入 `test` extra。
+
 ## 0.6.1
 
 ### 修复
