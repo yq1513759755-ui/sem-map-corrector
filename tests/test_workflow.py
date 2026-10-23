@@ -1,5 +1,7 @@
 import json
 import sys
+from pathlib import Path
+
 import pytest
 from semcorr.cli import main
 from semcorr.demo import make_demo_image
@@ -244,3 +246,32 @@ def test_incremental_reuses_when_params_match(tmp_path,monkeypatch):
         raise AssertionError('should not re-correct identical params')
     monkeypatch.setattr(pipeline,'correct_image',boom)
     assert main(['--batch',str(root),'--no-cad'])==0
+
+
+def test_outdir_tilde_is_expanded(tmp_path, monkeypatch):
+    """--outdir "~/out" 必须展开到家目录，而不是建一个字面量 ~ 目录。"""
+    root=tmp_path/'input';scene(root)
+    fake_home=tmp_path/'home';fake_home.mkdir()
+    monkeypatch.setenv('HOME',str(fake_home))
+    monkeypatch.setenv('USERPROFILE',str(fake_home))
+    assert main(['--batch',str(root),'--no-cad','--outdir','~/out'])==0
+    assert (fake_home/'out'/'diagnostics').is_dir()
+    assert not (root/'~').exists()
+    assert not (Path.cwd()/'~').exists()
+
+
+def test_batch_tilde_in_error_message_is_expanded(tmp_path, monkeypatch):
+    fake_home=tmp_path/'home';fake_home.mkdir()
+    monkeypatch.setenv('HOME',str(fake_home))
+    monkeypatch.setenv('USERPROFILE',str(fake_home))
+    assert main(['--batch','~/nonexistent'])==1
+
+
+def test_wires_overlay_is_not_treated_as_input(tmp_path):
+    """_wires.png 是诊断产物，不能出现在 list_images 的结果里。"""
+    from semcorr.io import list_images
+    root=tmp_path/'imgs';root.mkdir()
+    (root/'a.tif').write_bytes(b'x')
+    (root/'a_wires.png').write_bytes(b'x')
+    (root/'a_corrected.tif').write_bytes(b'x')
+    assert [p.name for p in list_images(root)]==['a.tif']

@@ -73,8 +73,27 @@ def _validate_grid(value):
         raise RuntimeError("--grid 至少需要 3 个标记")
 
 
+def _expand(value):
+    """Expand ``~`` in a user-supplied path (None passes through).
+
+    Without this, ``--outdir "~/out"`` silently creates a literal ``~``
+    directory in the current working directory.
+    """
+    if value is None:
+        return None
+    return str(Path(value).expanduser())
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    # Expand `~` once, before any path is used. Previously only --dxf-template
+    # and --dxf-outdir did this, so `--outdir "~/out"` created a literal `~`.
+    args.image = _expand(args.image)
+    args.batch = _expand(args.batch)
+    args.outdir = _expand(args.outdir)
+    args.design = _expand(args.design)
+    args.dxf_template = _expand(args.dxf_template)
+    args.dxf_outdir = _expand(args.dxf_outdir)
     # `./semcorr DIR` is the common case: treat a directory argument as --batch.
     if args.image and not args.batch:
         candidate = Path(args.image)

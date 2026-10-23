@@ -123,6 +123,19 @@ corrected/
 详细参数见 `./semcorr --help`。一键流程只接受通过质量检查的结果；有未导出图片时
 返回码为 1，但其他合格图片仍生成贴图包。原因见 `workflow_summary.json`。
 
+其他常用参数：
+
+| 参数 | 说明 |
+|---|---|
+| `--qc-only` | 只基于已有 `corrected/` 生成批次质检与邻格一致性报告，不重新校正 |
+| `--neighbor-tol-um` | 邻格共享 mark 允许偏差（µm，默认 0.05）；与 `--qc-only` 或批量结尾的质检一起用 |
+| `--dxf-outdir` | `--dxf` 的输出目录（默认 `~/PhD/dxf-gds/DXF`） |
+| `--force` | 忽略已有 PASS 结果，强制重新校正每一张图 |
+| `--version` | 打印版本号 |
+
+增量复用按**原图哈希 + 运行参数**判定：换 `--affine`、`--grid`、`--mark-arm`、
+`--design` 或 `--keep-info-bar` 后不会沿用旧报告，需重算请用 `--force`。
+
 ## 标准安装
 
 建议使用 Python 3.11–3.13 的独立虚拟环境：
@@ -398,7 +411,7 @@ M1,100.045,78.432,self-check,px
 
 `cad_manifest.json` 记录 `region.marker_code`、`region.quadrant`、
 `region.sub_quadrant`、大 marker 中心及小格四周范围；`cad_params.csv` 同时列出编号、
-两级象限和换算坐标。贴图包 `schema_version` 为 3，校正报告为 2。
+两级象限和换算坐标。贴图包 `schema_version` 为 4，校正报告为 2。
 
 原图改名后，可按 SHA256 关联唯一的已有校正报告；仅改文件名无需重算。
 当前一键运行失败或需复核的图像仍禁止借用历史成功报告。
