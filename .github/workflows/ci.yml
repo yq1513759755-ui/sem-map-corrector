@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        run: python -m pip install -e '.[test]'
+        # `dxf` is an optional runtime extra, but the test suite imports ezdxf
+        # (tests/test_dxf_export.py, tests/test_wires.py). Without it, pytest
+        # aborts at collection and no test runs at all.
+        run: python -m pip install -e '.[test,dxf]'
       - name: Test
         run: python -m pytest tests/ -q

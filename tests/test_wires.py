@@ -121,7 +121,7 @@ def test_end_to_end_batch_wires(tmp_path):
 
 
 def test_end_to_end_dxf_wire_layer(tmp_path):
-    import ezdxf
+    ezdxf = pytest.importorskip("ezdxf")
     from semcorr.cli import main
     from semcorr.demo import make_demo_image
 

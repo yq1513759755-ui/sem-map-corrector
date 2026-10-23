@@ -3,9 +3,13 @@ import json
 from pathlib import Path
 
 import cv2
-import ezdxf
 import numpy as np
 import pytest
+
+# ezdxf is an optional extra (`.[dxf]`). Skip this module instead of aborting
+# collection when it is absent — a bare top-level import makes pytest stop the
+# whole session with "Interrupted: 1 error during collection".
+ezdxf = pytest.importorskip("ezdxf")
 
 from semcorr.dxf_export import export_dxf_from_cad
 from semcorr.cli import main
