@@ -126,6 +126,10 @@ def main(argv=None):
             from .batch_qc import run_batch_qc
 
             root = Path(args.batch)
+            # run_batch_qc creates its output dir unconditionally, so a typo in
+            # the batch path would otherwise "succeed" with an empty report.
+            if not root.is_dir():
+                raise RuntimeError(f"批量目录不存在: {root}")
             outdir = Path(args.outdir) if args.outdir else root / "corrected"
             payload = run_batch_qc(root, corrected_dir=outdir, outdir=outdir,
                                    neighbor_tol_um=args.neighbor_tol_um)
@@ -264,7 +268,9 @@ def main(argv=None):
                 print(f"邻格不一致：{payload['summary']['n_mismatches']}")
             except (OSError, ValueError) as exc:
                 print(f"质检汇总失败：{exc}")
-            return 1 if failures else 0
+            # Reviews need a human look, same as in the CAD path (where they
+            # end up in ``skipped`` and force exit 1). Do not report success.
+            return 1 if (failures or reviews) else 0
 
         image = args.image or pick_image_dialog()
         image_path = Path(image)

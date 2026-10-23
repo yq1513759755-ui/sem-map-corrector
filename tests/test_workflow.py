@@ -1,4 +1,5 @@
 import json
+import sys
 import pytest
 from semcorr.cli import main
 from semcorr.demo import make_demo_image
@@ -155,3 +156,40 @@ def test_coordinate_overrides_option_removed():
     with pytest.raises(SystemExit) as exc:
         main(['--batch','unused','--cad','--anchor-overrides','unused.json'])
     assert exc.value.code==2
+
+
+def test_qc_only_missing_dir_fails_without_fabricating_report(tmp_path):
+    """A typo in --batch must not create an empty "all good" QC report."""
+    missing=tmp_path/'nope'
+    assert main(['--batch',str(missing),'--qc-only'])==1
+    assert not missing.exists()
+
+
+def test_no_cad_review_returns_failure_exit(tmp_path,monkeypatch):
+    """WARN_REVIEW must be a non-zero exit in the --no-cad path too.
+
+    The CAD path already returns 1 because reviews land in ``excluded``;
+    --no-cad used to return 0 and report success for the same image.
+    """
+    root=tmp_path/'input';scene(root)
+    from semcorr import pipeline
+    real=pipeline.correct_image
+    def review(*a,**kw):
+        report=real(*a,**kw)
+        report['quality_status']='WARN_REVIEW'
+        report['quality_warnings']=['test review']
+        return report
+    monkeypatch.setattr(pipeline,'correct_image',review)
+    assert main(['--batch',str(root),'--no-cad'])==1
+
+
+def test_dxf_without_ezdxf_reports_friendly_error(tmp_path,monkeypatch,capsys):
+    """Missing optional ezdxf must be a clean error, not an ImportError traceback."""
+    root=tmp_path/'input';scene(root)
+    monkeypatch.setitem(sys.modules,'ezdxf',None)  # makes ``import ezdxf`` fail
+    assert main(['--batch',str(root),'--dxf'])==1
+    out=capsys.readouterr().out
+    assert 'DXF 导出失败' in out
+    assert 'ezdxf' in out
+    assert 'Traceback' not in out
+

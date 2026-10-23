@@ -1,5 +1,22 @@
 # Changelog
 
+## 未发布
+
+### 修复
+
+- **CI 可在干净 runner 上运行**：CI 安装改为 `'.[test,dxf]'`；`tests/test_dxf_export.py` 与
+  `tests/test_wires.py` 改用 `pytest.importorskip("ezdxf")`。此前缺少可选依赖时 pytest 在
+  **收集阶段**即中止，170 个用例一个都不会执行。
+- **`--dxf` 缺 `ezdxf` 时给出友好错误**：`dxf_export` 改为函数内延迟导入，`_require_ezdxf()`
+  不再被模块级 `import ezdxf` 抢先失败；CLI 打印“DXF 导出失败：需要 ezdxf…”并返回 1，
+  不再抛 `ImportError` traceback。
+- **`--qc-only` 校验批量目录存在**：对不存在的目录报错并返回 1，不再凭空创建目录并输出
+  一份“图像 0 / 不一致 0”的空质检报告。
+- **`--no-cad` 批量退出码计入“需复核”**：存在 `WARN_REVIEW` 图片时返回 1，与 `--cad`
+  路径一致，避免自动化脚本把需人工复核的结果当作成功。
+- **`Pillow` 显式声明为运行时依赖**：`batch_qc` 直接使用 `PIL`，此前仅靠 matplotlib 的
+  传递依赖获得。
+
 ## 0.6.0
 
 - **纳米线绿色标注 → wire 层**：自动检测 SEM 原图上的纯绿线段（纳米线位置标注），经校正模型映射到校正图位置，换算为版图 µm 后在 DXF 的 `wire` 层绘制细长闭合矩形。

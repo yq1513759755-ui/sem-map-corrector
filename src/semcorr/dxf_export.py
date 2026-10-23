@@ -13,9 +13,9 @@ import math
 import os
 from pathlib import Path
 
-import ezdxf
-
-# Personal defaults (override with --dxf-template / --dxf-outdir).
+# ``ezdxf`` is an optional dependency (extra ``dxf``). Import it lazily: a
+# module-level import would make ``import semcorr.cli`` fail on a base install
+# and raise a bare ImportError traceback before any friendly message.
 DEFAULT_TEMPLATE = Path("~/PhD/dxf-gds/RAW/Marker.dxf").expanduser()
 DEFAULT_OUTDIR = Path("~/PhD/dxf-gds/DXF").expanduser()
 # All SEM underlays share one layer (created if the template lacks it).
@@ -23,12 +23,14 @@ IMAGE_LAYER = "photo"
 
 
 def _require_ezdxf():
+    """Return the ``ezdxf`` module or raise a friendly RuntimeError."""
     try:
-        import ezdxf  # noqa: F401
+        import ezdxf
     except ImportError as exc:
         raise RuntimeError(
             "需要 ezdxf 才能导出 DXF：uv pip install ezdxf（或 pip install 'sem-map-corrector[dxf]'）"
         ) from exc
+    return ezdxf
 
 
 def _relpath_for_dxf(image_path: Path, dxf_path: Path) -> str:
@@ -46,7 +48,7 @@ def export_dxf_from_cad(cad_dir, *, template, outdir, name=None):
     Returns dict with output path and per-image handles. Requires a completed
     CAD bundle (``cad/images/*.tif`` + manifest).
     """
-    _require_ezdxf()
+    ezdxf = _require_ezdxf()
     cad_dir = Path(cad_dir).resolve()
     template = Path(template).expanduser().resolve()
     outdir = Path(outdir).expanduser().resolve()
