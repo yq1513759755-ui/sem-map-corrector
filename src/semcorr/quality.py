@@ -15,22 +15,29 @@ from .geometry import fit_model, rms_of
 
 SUSPECT_RMS_DROP = 0.70
 SELF_CHECK_GATE = 0.30
+# 留一验证的"无冗余"判据：剔除一个点后若剩余点数刚好等于该模型的自由度，
+# 重新拟合会精确穿过剩余点，rms_without 恒为 0，此时下降判据没有信息量。
+_MIN_POINTS = {"affine": 3, "homography": 4}
 
 
 def leave_one_out(ideal, ordered, method):
     """留一交叉验证：每次剔除一个标记、用其余点重新拟合同一模型。
     若剔除某标记后 RMS 明显下降（< SUSPECT_RMS_DROP × 全体 RMS），
     说明该点一直在拉歪模型 → 可疑。只报告，不自动剔除。
-    冗余守卫：剔除后点数不足以拟合模型时（单应 <4、仿射 <3）无法
-    验证（2x2 网格用单应正属此情形），如实返回"不适用"。"""
+
+    冗余守卫：当 n-1 恰好等于模型所需最少点数时（2x2 用仿射、5 点用单应），
+    重拟合是恰定的，rms_without 恒为 0 —— 用它作判据会把**所有**点都标成可疑。
+    这种情形改用留出残差（该点相对其余点拟合结果的偏差）判定，并如实记录
+    判定依据。"""
     n = len(ideal)
     src = np.asarray(ideal, np.float64)
     dst = np.asarray(ordered, np.float64)
     _, resid_full = fit_model(src, dst, method)
     rms_full = rms_of(resid_full)
-    min_pts = 3 if method == "affine" else 4
+    min_pts = _MIN_POINTS.get(method, 4)
     if n - 1 < min_pts:
         return {"rms_full_px": rms_full, "per_mark": [], "suspects": [],
+                "criterion": "not-applicable",
                 "note": "仅 %d 个标记：剔除后不足 %d 个，无法拟合%s，"
                         "留一验证不适用（无冗余可校验）"
                         % (n, min_pts, "仿射" if method == "affine" else "单应")}
@@ -50,13 +57,34 @@ def leave_one_out(ideal, ordered, method):
         entries.append({"id": "M%d" % (i + 1),
                         "rms_without_px": rms_i,
                         "holdout_residual_px": hold})
+    # 恰定重拟合：rms_without 恒为 0，下降判据失效，改用留出残差。
+    exactly_determined = (n - 1) == min_pts
     suspects = []
-    if rms_full > 0.05:
-        for e in entries:
-            if e["rms_without_px"] < SUSPECT_RMS_DROP * rms_full:
-                suspects.append(e["id"])
+    if exactly_determined:
+        criterion = "holdout"
+        if rms_full > 0.05:
+            holds = np.array([e["holdout_residual_px"] for e in entries])
+            med = float(np.median(holds))
+            for e in entries:
+                # 明显大于其余点的留出残差才算可疑；恰定模型下全体点
+                # 共享同一个留出残差，此时不会有人被误标。
+                if med > 0 and e["holdout_residual_px"] > 2.0 * med:
+                    suspects.append(e["id"])
+    else:
+        criterion = "rms-drop"
+        if rms_full > 0.05:
+            holds = np.array([e["holdout_residual_px"] for e in entries])
+            med_hold = float(np.median(holds))
+            for e in entries:
+                # 两个条件同时成立才可疑：剔除它能让全体 RMS 明显下降（说明
+                # 它在拉歪模型），且它自身的留出残差高于中位数（说明偏差集中
+                # 在它身上）。只看前者会把被离群点带偏的相邻点一并标出。
+                if (e["rms_without_px"] < SUSPECT_RMS_DROP * rms_full
+                        and e["holdout_residual_px"] > med_hold):
+                    suspects.append(e["id"])
     return {"rms_full_px": rms_full, "per_mark": entries,
-            "suspects": suspects}
+            "suspects": suspects, "criterion": criterion,
+            "exactly_determined": exactly_determined}
 
 
 def self_check(corrected, ideal, n_rows, n_cols, span_hint=None, verbose=False):

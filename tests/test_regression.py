@@ -243,6 +243,32 @@ class LeaveOneOutTests(unittest.TestCase):
         self.assertEqual(loo["per_mark"], [])
         self.assertEqual(loo["suspects"], [])
 
+    def test_2x2_affine_does_not_flag_every_mark(self):
+        """2x2 用仿射时剔除 1 点恰好剩 3 点 → 重拟合恰定，rms_without 恒为 0。
+
+        旧实现因此只要 rms_full > 0.05 就把**全部 4 个点**标为可疑。
+        """
+        ideal = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0)]
+        dst = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.15, 10.15)]
+        loo = mdc.leave_one_out(ideal, dst, "affine")
+        self.assertGreater(loo["rms_full_px"], 0.05, "构造场景应触发判定")
+        self.assertTrue(loo["exactly_determined"])
+        self.assertEqual(loo["criterion"], "holdout")
+        self.assertNotEqual(sorted(loo["suspects"]), ["M1", "M2", "M3", "M4"],
+                            "恰定重拟合下不得把全部点标为可疑")
+
+    def test_single_outlier_still_flagged_with_redundancy(self):
+        """有冗余时（2x3 单应）真离群点仍须被抓到，且不应波及邻居。"""
+        ideal = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0),
+                 (0.0, 10.0), (10.0, 10.0), (20.0, 10.0)]
+        dst = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0),
+               (0.0, 10.0), (10.0, 10.0), (20.9, 10.4)]
+        loo = mdc.leave_one_out(ideal, dst, "homography")
+        self.assertEqual(loo["criterion"], "rms-drop")
+        self.assertIn("M6", loo["suspects"])
+        self.assertNotIn("M5", loo["suspects"],
+                         "被离群点带偏的邻居不应被标为可疑")
+
 
 class Grid2x2Tests(unittest.TestCase):
     """标准 4-mark（2x2）图像端到端：单格精确单应 + 自检。"""
@@ -753,6 +779,50 @@ class ScaleInvariantAreaGateTests(unittest.TestCase):
                           "失败信息应指出真因是面积门而非十字残缺")
         finally:
             se2_mod.MIN_AREA_FLOOR, se2_mod.MIN_AREA_RATIO = old
+
+    def test_big_bright_blob_does_not_poison_area_gate(self):
+        """单个巨大亮块不能把面积门抬到把真标记全丢掉。
+
+        旧实现取 max(area) 作尺度基准：4 个小十字 + 一个 60×60 亮块时
+        anchor 从 47 px² 跳到 3631 px²，面积门升到 302 px²，真标记被丢光。
+        """
+        from semcorr.detectors.se2 import find_candidates
+        img = np.full((600, 600), 45, np.uint8)
+        for x, y in ((150, 150), (450, 150), (150, 450), (450, 450)):
+            img[y - 1:y + 2, x - 5:x + 6] = 210
+            img[y - 5:y + 6, x - 1:x + 2] = 210
+        diag = {}
+        find_candidates(img, diag=diag)
+        self.assertEqual(diag["n_candidates"], 4, "干净图应保留 4 个标记")
+        clean_min_area = diag["min_area_px2"]
+
+        poisoned = img.copy()
+        poisoned[280:340, 280:340] = 255
+        diag2 = {}
+        cands, _ = find_candidates(poisoned, diag=diag2)
+        self.assertTrue(diag2["anchor_capped"],
+                        "离群巨块应触发锚点封顶")
+        # 亮块自身作为候选出现是正常的（下游模板/形状门会剔除它）；
+        # 这里要保证的是 4 个真标记不被面积门丢掉。
+        self.assertEqual(diag2["n_dropped_by_area"], 0,
+                         "亮块不应导致真标记被面积门丢弃")
+        self.assertGreaterEqual(diag2["n_candidates"], 4)
+        # 面积门被毒化时是 300+ px²（远高于真标记的 47 px²）；封顶后应
+        # 仍处在真标记面积之下。
+        self.assertLess(diag2["min_area_px2"], 47.0,
+                        "面积门必须低于真标记面积，否则标记会被丢弃")
+
+    def test_area_gate_still_tracks_real_scale_family(self):
+        """标记族内（大:小 约 6.6 倍）时封顶不应生效，锚点仍是最大者。"""
+        from semcorr.detectors.se2 import (MAX_ANCHOR_MEDIAN_RATIO,
+                                           find_candidates)
+        diag = {}
+        find_candidates(self._scene(1.0), diag=diag)
+        self.assertFalse(diag["anchor_capped"],
+                         "6.6 倍面积比在 %g 倍中位数以内，不应触发封顶"
+                         % MAX_ANCHOR_MEDIAN_RATIO)
+        self.assertGreater(diag["anchor_area_px2"],
+                           diag["median_area_px2"])
 
 
 class InfoBarTests(unittest.TestCase):

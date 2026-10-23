@@ -154,3 +154,35 @@ def test_wire_params_rejected_outside_cad(tmp_path):
     make_demo_image(root / "a.tif", n_rows=2, n_cols=2)
     assert main(["--batch", str(root), "--no-cad",
                  "--wire-width-um", "1.0"]) == 1
+
+
+def test_solid_green_blob_is_not_a_wire():
+    """实心绿块长宽比≈1：此前会被当成 wire（实测 20×20 块得到 21 µm 宽）。"""
+    img = np.zeros((200, 200, 3), np.uint8)
+    img[80:100, 80:100] = (0, 255, 0)
+    assert detect_green_segments(img) == []
+
+
+def test_green_text_blocks_are_not_wires():
+    """绿色文字块同样不应产生 wire。"""
+    img = np.zeros((200, 200, 3), np.uint8)
+    for i in range(6):
+        img[50:60, 20 + i * 25:30 + i * 25] = (0, 255, 0)
+    assert detect_green_segments(img) == []
+
+
+@pytest.mark.parametrize("thickness", [1, 2, 3])
+def test_thin_green_lines_still_detected(thickness):
+    """真纳米线标注（细笔画）不能被形状门误杀。"""
+    img = np.zeros((200, 200, 3), np.uint8)
+    cv2.line(img, (20, 100), (180, 100), (0, 255, 0), thickness)
+    segs = detect_green_segments(img)
+    assert len(segs) == 1
+    assert segs[0]["length_px"] > 100
+    assert segs[0]["width_px"] < 6
+
+
+def test_diagonal_thin_line_detected():
+    img = np.zeros((200, 200, 3), np.uint8)
+    cv2.line(img, (30, 40), (170, 150), (0, 255, 0), 2)
+    assert len(detect_green_segments(img)) == 1

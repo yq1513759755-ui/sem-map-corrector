@@ -28,6 +28,11 @@ GREEN_LEAD = 40
 MIN_SEGMENT_AREA_PX = 8
 # 低于该长度的绿色碎点不算线段（µm 级纳米线在 0.09 µm/px 下至少几十像素）
 MIN_SEGMENT_LENGTH_PX = 8.0
+# 长宽比下限：纳米线标注是细长笔画（长度远大于笔宽）。实心绿块、绿色文字块
+# 的长宽比接近 1，此前会被当成 wire —— 实测 20×20 实心块得到 21 µm 宽的矩形。
+MIN_SEGMENT_ASPECT = 5.0
+# 笔宽上限（px）：绿色标注是细线；超过此宽度说明不是纳米线标注。
+MAX_SEGMENT_WIDTH_PX = 12.0
 WIRE_WIDTH_UM = 0.5
 WIRE_EXTEND_UM = 0.5
 
@@ -72,6 +77,12 @@ def detect_green_segments(color_bgr, crop_top=None):
         if length < MIN_SEGMENT_LENGTH_PX:
             continue
         width = float(area) / length
+        # 形状门：纳米线标注是细长笔画。实心块/文字块长宽比接近 1、笔宽很大，
+        # 之前会被当成 wire 并画出与实际无关的矩形。
+        if width <= 0 or length / width < MIN_SEGMENT_ASPECT:
+            continue
+        if width > MAX_SEGMENT_WIDTH_PX:
+            continue
         segments.append({
             "p1": (float(p1[0]), float(p1[1])),
             "p2": (float(p2[0]), float(p2[1])),

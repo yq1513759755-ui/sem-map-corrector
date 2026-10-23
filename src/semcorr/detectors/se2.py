@@ -10,6 +10,10 @@ from .edges import refine_arm_edges
 
 MIN_AREA_FLOOR = 30.0     # 面积下限的绝对兜底（px²）：再小就不可能是标记
 MIN_AREA_RATIO = 12.0     # 面积门 = 图中最大可信连通域面积 / 该比值
+# 锚点对中位数的上限倍数。版图里大十字:小十字面积比约 8–9，所以 8 倍中位数
+# 仍能覆盖真实标记族；而单个巨大亮块（碎屑、标注、界面元素）会把 max 抬到
+# 中位数的几十倍，此时用 8×中位数 兜住，避免面积门被毒化到把真标记全丢掉。
+MAX_ANCHOR_MEDIAN_RATIO = 8.0
 MAX_AREA_FRAC = 0.25
 BBOX_ASPECT_RANGE = (0.35, 3.0)
 WINDOW_FACTOR = 2.0
@@ -55,7 +59,20 @@ def find_candidates(gray, diag=None):
         plausible.append((i, int(x), int(y), int(w), int(h), float(area)))
 
     # 第二遍：用最大者的面积定尺度，再据此筛面积
-    anchor = max((p[5] for p in plausible), default=0.0)
+    #
+    # 直接取 max 会被单个巨大亮块毒化：实测 4 个小标记（span 10）加一个
+    # 60×60 亮块后，anchor 从 47 px² 跳到 3631 px²，面积门升到 302 px²，
+    # 4 个真标记被丢弃 3 个，最终表现成"标记不齐全"。这里用 max 与
+    # "中位数 × 常数" 的较小者：标记尺寸成族（大:小 ≈ 8–9 倍）时二者一致，
+    # 出现离群巨块时由中位数兜底。
+    areas = sorted(p[5] for p in plausible)
+    if areas:
+        median_area = float(np.median(areas))
+        anchor = min(float(max(areas)),
+                     MAX_ANCHOR_MEDIAN_RATIO * median_area)
+    else:
+        median_area = 0.0
+        anchor = 0.0
     min_area = (max(MIN_AREA_FLOOR, anchor / MIN_AREA_RATIO)
                 if anchor > 0 else MIN_AREA_FLOOR)
 
@@ -79,6 +96,8 @@ def find_candidates(gray, diag=None):
         diag.clear()
         diag.update({
             "anchor_area_px2": anchor,
+            "median_area_px2": median_area,
+            "anchor_capped": bool(areas and anchor < float(max(areas))),
             "min_area_px2": min_area,
             "n_plausible": len(plausible),
             "n_candidates": len(cands),
