@@ -16,3 +16,7 @@ notebook_output/
 *.jpeg
 *.png
 .DS_Store
+
+# coverage
+.coverage
+coverage.xml
