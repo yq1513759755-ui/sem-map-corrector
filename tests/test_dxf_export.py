@@ -17,7 +17,7 @@ def _fake_cad(root: Path):
     image = np.full((20, 30, 3), 180, np.uint8)
     cv2.imwrite(str(cad / "images" / "SEM_test.tif"), image)
     manifest = {
-        "schema_version": 3,
+        "schema_version": 4,
         "images": [{
             "name": "0101-11-01",
             "id": "SEM_test",
@@ -27,6 +27,12 @@ def _fake_cad(root: Path):
             "origin_um": [10.0, 20.0],
             "u_um": [0.1, 0.0],
             "v_um": [0.0, 0.1],
+            "wires": [{
+                "p1_um": [12.0, 22.0], "p2_um": [14.0, 22.0],
+                "length_um": 2.0, "width_um": 0.5, "extend_um": 0.5,
+                "quad_um": [[11.5, 22.25], [14.5, 22.25],
+                            [14.5, 21.75], [11.5, 21.75]],
+            }],
         }],
         "skipped": [],
     }
@@ -56,6 +62,11 @@ def test_export_dxf_writes_r2018_with_pixel_vectors(tmp_path):
     assert "photo" in loaded.layers
     defs = list(loaded.objects.query("IMAGEDEF"))
     assert defs and "SEM_test.tif" in defs[0].dxf.filename
+    assert result["n_wires"] == 1
+    wires = list(loaded.modelspace().query('LWPOLYLINE[layer=="wire"]'))
+    assert len(wires) == 1 and wires[0].closed
+    pts = [(float(x), float(y)) for x, y in wires[0].get_points("xy")]
+    assert pts[0] == pytest.approx((11.5, 22.25))
 
 
 def test_cli_dxf_flag_exports_to_custom_dir(tmp_path):

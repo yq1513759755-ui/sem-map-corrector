@@ -11,6 +11,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 from .io import list_images, sha256_file
+from .wires import (WIRE_EXTEND_UM, WIRE_WIDTH_UM, detect_wires_in_corrected,
+                    draw_wire_overlay)
 
 REGION = re.compile(r'(?P<marker>[0-9]{4})-(?P<quadrant>[1-4])(?P<subquadrant>[1-4])(?:-(?P<sequence>[0-9]+))?')
 IDS = ('M1','M2','M3','M4')
@@ -94,7 +96,8 @@ def fit_bottom_left(points,height,anchor_um,pitch_um=50.):
                 rms_um=float(np.sqrt(np.mean(errors**2))),max_residual_um=float(errors.max()))
 
 
-def prepare_image(raw,corrected_dir,pitch_um,max_residual_um):
+def prepare_image(raw,corrected_dir,pitch_um,max_residual_um,
+                  wire_width_um=WIRE_WIDTH_UM, wire_extend_um=WIRE_EXTEND_UM):
     validate_region_pitch(pitch_um)
     region=parse_region(raw.stem)
     anchor,source=parse_anchor(raw.stem)
@@ -149,12 +152,30 @@ def prepare_image(raw,corrected_dir,pitch_um,max_residual_um):
         raise ValueError('最大单点偏差 %.4f µm 超过 %.4f µm'%(fit['max_residual_um'],max_residual_um))
     if abs(fit['rotation_deg'])>5:
         raise ValueError('旋转超过 5°，请确认图像右=+X、图像上=+Y')
+    # 纳米线绿色标注 → 校正图像素 → 版图 µm → wire 矩形。失败不阻断贴图，
+    # 只在 manifest 的 wire_note 里记录原因（无绿色标注是正常情况，非失败）。
+    wires, wire_note = [], ''
+    matrix = np.column_stack([fit['u_um'], fit['v_um']])
+    try:
+        wires, segs = detect_wires_in_corrected(
+            raw, r, height, matrix, fit['origin_um'],
+            width_um=wire_width_um, extend_um=wire_extend_um)
+        if wires:
+            overlay = draw_wire_overlay(image, segs, wire_width_um,
+                                        wire_extend_um, fit['scale_um_per_px'])
+            op = corrected_dir/'diagnostics'/(raw.stem+'_wires.png')
+            op.parent.mkdir(parents=True, exist_ok=True)
+            if not cv2.imwrite(str(op), overlay):
+                raise RuntimeError('wire 叠加层写入失败')
+    except (ValueError, OSError, RuntimeError) as exc:
+        wire_note = str(exc)
     image_hash=sha256_file(ip)
     identity=hashlib.sha256((raw.stem+image_hash+json.dumps(anchor.tolist())).encode()).hexdigest()[:12]
     return dict(name=raw.stem,id='SEM_'+identity,anchor_um=anchor.tolist(),anchor_source=source,region=region,
                 pitch_um=pitch_um,image=str(ip.resolve()),report=str(rp.resolve()),
                 raw_sha256=r['input_sha256'],corrected_sha256=image_hash,
-                width_px=width,height_px=height,centers_px=points.tolist(),**fit)
+                width_px=width,height_px=height,centers_px=points.tolist(),
+                wires=wires,wire_note=wire_note,**fit)
 
 
 def lisp_string(value):
@@ -166,11 +187,16 @@ def lisp_point(value):
 
 
 def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
-                 corrected_dir=None,excluded=None):
+                 corrected_dir=None,excluded=None,
+                 wire_width_um=WIRE_WIDTH_UM, wire_extend_um=WIRE_EXTEND_UM):
     folder=Path(folder).resolve()
     validate_region_pitch(pitch_um)
     if not all(math.isfinite(x) and x>0 for x in (pitch_um,max_residual_um)):
         raise ValueError('间距和误差门槛必须为正数')
+    if not math.isfinite(wire_width_um) or wire_width_um<=0:
+        raise ValueError('wire 宽度必须为有限正数')
+    if not math.isfinite(wire_extend_um) or wire_extend_um<0:
+        raise ValueError('wire 外延必须为有限非负数')
     corrected_dir=Path(corrected_dir).resolve() if corrected_dir else folder/'corrected'
     outdir=Path(outdir).resolve() if outdir else corrected_dir/'cad'
     excluded=excluded or {}
@@ -181,7 +207,9 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
             skipped.append(dict(name=raw.name,reason=excluded[raw.name]))
             continue
         try:
-            rows.append(prepare_image(raw,corrected_dir,pitch_um,max_residual_um))
+            rows.append(prepare_image(raw,corrected_dir,pitch_um,max_residual_um,
+                                      wire_width_um=wire_width_um,
+                                      wire_extend_um=wire_extend_um))
         except (ValueError,KeyError,TypeError,OSError) as exc:
             skipped.append(dict(name=raw.name,reason=str(exc)))
     outdir.mkdir(parents=True,exist_ok=True);(outdir/'images').mkdir(exist_ok=True)
@@ -190,16 +218,27 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
         dest=outdir/row['bundle_image'];shutil.copy2(row['image'],dest)
         if sha256_file(dest)!=row['corrected_sha256']:
             raise RuntimeError('图像复制校验失败')
-    summary=dict(schema_version=3,naming_convention='marker-quadrant-subquadrant-sequence',coordinate_unit='um',anchor='bottom-left M3',
+    summary=dict(schema_version=4,naming_convention='marker-quadrant-subquadrant-sequence',coordinate_unit='um',anchor='bottom-left M3',
                  quadrant_convention='I=+X/+Y then counter-clockwise, 100 um then 50 um',
                  orientation='image-right=+X,image-up=+Y',pixel_convention='x+0.5,H-y-0.5',
-                 pitch_um=pitch_um,max_residual_um=max_residual_um,images=rows,skipped=skipped)
+                 pitch_um=pitch_um,max_residual_um=max_residual_um,
+                 wire_width_um=wire_width_um,wire_extend_um=wire_extend_um,
+                 n_wires=sum(len(r['wires']) for r in rows),
+                 images=rows,skipped=skipped)
     (outdir/'cad_manifest.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
     with (outdir/'cad_params.csv').open('w',encoding='utf-8-sig',newline='') as handle:
         writer=csv.writer(handle)
         writer.writerow(['name','marker_code','quadrant','sub_quadrant','anchor_x_um','anchor_y_um','origin_x_um','origin_y_um','um_per_px','rotation_deg','width_um','height_um','rms_um','max_residual_um','image_id'])
         for r in rows:
             writer.writerow([r['name'],r['region']['marker_code'],r['region']['quadrant'],r['region']['sub_quadrant'],*r['anchor_um'],*r['origin_um'],r['scale_um_per_px'],r['rotation_deg'],r['width_px']*r['scale_um_per_px'],r['height_px']*r['scale_um_per_px'],r['rms_um'],r['max_residual_um'],r['id']])
+    with (outdir/'wires.csv').open('w',encoding='utf-8-sig',newline='') as handle:
+        writer=csv.writer(handle)
+        writer.writerow(['name','wire','x1_um','y1_um','x2_um','y2_um','length_um','width_um','extend_um',
+                         'q1_x','q1_y','q2_x','q2_y','q3_x','q3_y','q4_x','q4_y'])
+        for r in rows:
+            for i,w in enumerate(r['wires'],1):
+                quad=[c for q in w['quad_um'] for c in q]
+                writer.writerow([r['name'],i,*w['p1_um'],*w['p2_um'],w['length_um'],w['width_um'],w['extend_um'],*quad])
     data=[]
     for r in rows:
         data.append('  ('+' '.join([lisp_string(r['id']),lisp_string(r['bundle_image']),str(r['width_px']),str(r['height_px']),lisp_point(r['origin_um']),lisp_point(r['u_um']),lisp_point(r['v_um'])])+')')
@@ -241,11 +280,16 @@ def main(argv=None):
     p.add_argument('folder');p.add_argument('--outdir')
     p.add_argument('--pitch-um',type=float,default=50.)
     p.add_argument('--max-residual-um',type=float,default=.05)
+    p.add_argument('--wire-width-um',type=float,default=WIRE_WIDTH_UM,
+                   help='wire 矩形宽度 µm（默认 %.2f，与手绘 wire 约定一致）'%WIRE_WIDTH_UM)
+    p.add_argument('--wire-extend-um',type=float,default=WIRE_EXTEND_UM,
+                   help='wire 相对纳米线两端各外延 µm（默认 %.2f）'%WIRE_EXTEND_UM)
     a=p.parse_args(argv)
     try:
-        r=export_batch(a.folder,outdir=a.outdir,pitch_um=a.pitch_um,max_residual_um=a.max_residual_um)
+        r=export_batch(a.folder,outdir=a.outdir,pitch_um=a.pitch_um,max_residual_um=a.max_residual_um,
+                       wire_width_um=a.wire_width_um,wire_extend_um=a.wire_extend_um)
     except (ValueError,OSError) as exc:
         p.exit(2,str(exc)+'\n')
-    print('贴图包：可用 %d 张 / 跳过 %d 张'%(len(r['images']),len(r['skipped'])))
+    print('贴图包：可用 %d 张 / 跳过 %d 张 / wire %d 根'%(len(r['images']),len(r['skipped']),r['n_wires']))
     for e in r['skipped']:print('[跳过] %(name)s: %(reason)s'%e)
     return 1 if r['skipped'] else 0

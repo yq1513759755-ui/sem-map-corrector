@@ -5,7 +5,7 @@
 面向实验室的 **SE2 SEM 十字标记定位、图像几何校正与 AutoCAD 数值贴图工具**。
 提供原图批量处理到 CAD 贴图包的一键工作流，减少人工点击十字中心和逐张调整比例的操作。
 
-**当前版本：0.5.2。** 支持 SE2 实心亮十字；不自动识别 InLens 浮雕风格。
+**当前版本：0.6.0。** 支持 SE2 实心亮十字；不自动识别 InLens 浮雕风格。
 CAD 贴图使用人工提供的位置标注，不从重复标记阵列猜测绝对坐标。
 
 ## 主要功能
@@ -13,6 +13,7 @@ CAD 贴图使用人工提供的位置标注，不从重复标记阵列猜测绝�
 - 自动裁去底部 SEM 参数栏及白色边框，裁下的参数栏另存备查。
 - 模板检测结合四臂边缘中轴交点定位，提供亚像素中心、几何校正和校正后复检。
 - 从文件名读取左下十字的版图坐标，生成 AutoCAD 贴图脚本、图像副本及数值参数。
+- 自动识别 SEM 原图上的纳米线绿色标注，在 DXF `wire` 层绘制 wire 矩形。
 - 统一记录通过、需复核和失败结果；本次失败图片不会借用历史成功报告进入贴图包。
 - 支持命令行、Python API 和 Jupyter 校正；输入原图不被修改。
 
@@ -74,14 +75,15 @@ SEMCORR_PYTHON=/path/to/python ./semcorr --help
 ```text
 corrected/
 ├── *_corrected.tif       校正图，包含红色中心标记
-├── diagnostics/          定位诊断、坐标、参数栏与逐图报告
+├── diagnostics/          定位诊断、坐标、参数栏、wire 叠加层与逐图报告
 ├── workflow_summary.json 批次状态及未导出原因
 └── cad/
     ├── sem_map.lsp       AutoCAD 贴图程序
     ├── attach_all.scr    批量运行入口
     ├── images/           贴图使用的图像副本
     ├── cad_params.csv    插入点、比例、角度及残差
-    └── cad_manifest.json 坐标约定、输入哈希及导出记录
+    ├── wires.csv         纳米线 wire 矩形（端点、长度、宽度、四角）
+    └── cad_manifest.json 坐标约定、输入哈希、wire 与导出记录
 ```
 
 ### 4. 在 AutoCAD 中贴图
@@ -417,6 +419,35 @@ M1,100.045,78.432,self-check,px
 - 两级编号各取 1–4，相邻写在一起；`12` 与 `21` 是两个不同区域，程序不猜测、不交换。
 - 先确认所属数字 marker 及小格，再修改原图文件名。程序不会自动改名或覆盖原始图像。
 - 原图改名后重新导出贴图包，并在 AutoCAD 重新 APPLOAD 加载；旧脚本仍保存着旧坐标。
+
+## 纳米线 wire 层（0.6.0）
+
+SEM 原图上用**纯绿 `#00FF00`** 描出的细线段是纳米线位置标注。批量流程会自动
+检测这些线段，经校正模型映射到校正图位置，再按 CAD 贴图同一坐标换算为版图
+µm，在输出 DXF 的 `wire` 层绘制**细长闭合矩形**：
+
+- **长度** = 纳米线长度 + 两端各外延 `--wire-extend-um`（默认 0.5 µm，即总长 +1 µm）。
+- **宽度** = `--wire-width-um`（默认 0.5 µm，与实验室手绘 wire 约定一致）。
+- 每张有标注的图另存 `diagnostics/<图名>_wires.png` 叠加层：黄线 = 检出的
+  纳米线，青框 = wire 矩形，贴图前可人工核对。
+- `corrected/cad/wires.csv` 列出每根 wire 的端点、长度、宽度与矩形四角；
+  `cad_manifest.json` 的 `images[*].wires` 为同一数据（schema_version 4）。
+
+```bash
+./semcorr --batch image_folder --dxf --dxf-template RAW/Mark-new.dxf \
+  --wire-width-um 0.5 --wire-extend-um 0.5
+```
+
+判据与边界：
+
+- 只认纯绿线段（绿通道显著高于红/蓝且亮于 100）；连通域做 PCA 拟合中心线，
+  逐像素经校正单应映射后重新拟合，吸收校正形变。
+- 参数栏区域内的绿色界面图形随信息栏裁切排除；绿色碎点（< 8 px）忽略。
+- 仅支持 2x2 exact-square 校正模型（一键 CAD 流程即此）；`--affine` 下不生成
+  wire，原因记入 manifest 的 `wire_note`。
+- 无绿色标注的图片照常贴图，只是没有 wire —— 不是错误。
+- wire 位置来自**人工标注**，程序不识别 SEM 图像里的纳米线本体；矩形只是
+  位置示意，实际套刻精度以曝光工艺为准。
 
 ## Jupyter 交互版
 

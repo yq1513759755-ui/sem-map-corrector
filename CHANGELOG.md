@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- **纳米线绿色标注 → wire 层**：自动检测 SEM 原图上的纯绿线段（纳米线位置标注），经校正模型映射到校正图位置，换算为版图 µm 后在 DXF 的 `wire` 层绘制细长闭合矩形。
+- 矩形长度 = 纳米线 + 两端各外延（`--wire-extend-um`，默认 0.5 µm），宽度沿用手绘 wire 约定（`--wire-width-um`，默认 0.5 µm）。
+- 每张有标注的图另存 `diagnostics/<图名>_wires.png` 叠加层（黄=纳米线、青=wire 矩形）供人工复核；贴图包新增 `wires.csv`，`cad_manifest.json` 记录逐根端点/矩形（schema_version 升至 4）。
+- 参数栏区域内的绿色图形（非纳米线）随信息栏裁切一并排除；无绿色标注时行为不变。
+- 仅支持 2x2 exact-square 校正模型（`--affine` 下不生成 wire 并在 manifest 记录原因）。
+
 ## 0.5.2
 
 - **贴图层改为 `photo`**：LISP 与 `--dxf` 的 IMAGE 一律放在 `photo` 层；图层不存在时自动创建，不再使用 `0` 层。

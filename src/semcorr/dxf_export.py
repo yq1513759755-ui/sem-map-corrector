@@ -110,11 +110,22 @@ def export_dxf_from_cad(cad_dir, *, template, outdir, name=None):
             "v_um": v,
         })
 
+    # Wire layer: closed rectangles from green nanowire annotations (if any).
+    wire_rows = [(row, w) for row in images for w in (row.get("wires") or [])]
+    if wire_rows and "wire" not in doc.layers:
+        doc.layers.add("wire", color=3)
+    n_wires = 0
+    for row, w in wire_rows:
+        quad = [(float(x), float(y)) for x, y in w["quad_um"]]
+        msp.add_lwpolyline(quad, close=True, dxfattribs={"layer": "wire"})
+        n_wires += 1
+
     doc.saveas(out_path)
     return {
         "output": str(out_path),
         "template": str(template),
         "n_images": len(inserted),
+        "n_wires": n_wires,
         "images": inserted,
         "dxf_version": "R2018",
     }

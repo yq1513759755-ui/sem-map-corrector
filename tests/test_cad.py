@@ -158,7 +158,7 @@ def test_full_bundle_round_trip(batch):
     assert depth==0
     saved=json.loads((bundle/'cad_manifest.json').read_text())
     assert saved['images'][0]['anchor_um']==[100,100]
-    assert saved['schema_version']==3
+    assert saved['schema_version']==4
     assert saved['naming_convention']=='marker-quadrant-subquadrant-sequence'
     assert saved['images'][0]['region']['quadrant']==1
     assert saved['images'][0]['region']['sub_quadrant']==3

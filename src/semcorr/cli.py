@@ -27,6 +27,10 @@ def build_parser():
     parser.add_argument("--pitch-um", type=float, default=50., help="区域网格固定间距（仅支持 50 µm）")
     parser.add_argument("--max-residual-um", type=float, default=.05,
                         help="CAD 最大单点配准误差（µm，默认 0.05）")
+    parser.add_argument("--wire-width-um", type=float, default=.5,
+                        help="wire 矩形宽度（µm，默认 0.5，与手绘 wire 约定一致）")
+    parser.add_argument("--wire-extend-um", type=float, default=.5,
+                        help="wire 相对纳米线两端各外延（µm，默认 0.5）")
     parser.add_argument("--design", help="M1..Mn 设计坐标 JSON")
     parser.add_argument("--grid", default="2x2",
                         help="标记网格 行x列，默认 2x2")
@@ -99,9 +103,14 @@ def main(argv=None):
         if use_cad:
             if not all(math.isfinite(v) and v > 0 for v in (args.pitch_um, args.max_residual_um)):
                 raise RuntimeError("CAD 间距和残差门槛必须为有限正数")
+            if not math.isfinite(args.wire_width_um) or args.wire_width_um <= 0:
+                raise RuntimeError("--wire-width-um 必须为有限正数")
+            if not math.isfinite(args.wire_extend_um) or args.wire_extend_um < 0:
+                raise RuntimeError("--wire-extend-um 必须为有限非负数")
             from .cad import parse_region, validate_region_pitch
             validate_region_pitch(args.pitch_um)
-        elif args.pitch_um != 50. or args.max_residual_um != .05:
+        elif args.pitch_um != 50. or args.max_residual_um != .05 \
+                or args.wire_width_um != .5 or args.wire_extend_um != .5:
             raise RuntimeError("CAD 参数仅在贴图包流程中生效（默认开启；跳过请用 --no-cad）")
         if args.mark_arm is not None and args.mark_arm < 0:
             raise RuntimeError("--mark-arm 不能为负数（0 = 只画中心 1 个像素）")
@@ -187,7 +196,9 @@ def main(argv=None):
                 excluded.update(naming_errors)
                 cad = export_batch(root, corrected_dir=outdir, excluded=excluded,
                                    pitch_um=args.pitch_um,
-                                   max_residual_um=args.max_residual_um)
+                                   max_residual_um=args.max_residual_um,
+                                   wire_width_um=args.wire_width_um,
+                                   wire_extend_um=args.wire_extend_um)
                 exported = {row["name"] for row in cad["images"]}
                 reasons = {row["name"]: row["reason"] for row in cad["skipped"]}
                 failed_names = {name for name, _ in failures}
@@ -206,7 +217,7 @@ def main(argv=None):
                            "cad_script": str((outdir / "cad" / "sem_map.lsp").resolve())}
                 summary_path = outdir / "workflow_summary.json"
                 summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-                print(f"\n===== 一键流程完成：可贴图 {summary['ready']} / 未导出 {summary['skipped']} =====")
+                print(f"\n===== 一键流程完成：可贴图 {summary['ready']} / 未导出 {summary['skipped']} / wire {cad['n_wires']} 根 =====")
                 for row in cad["skipped"]:
                     print(f"  [未导出] {row['name']}: {row['reason'].splitlines()[0]}")
                 print(f"批次汇总：{summary_path.resolve()}")
@@ -227,7 +238,7 @@ def main(argv=None):
                         result = export_dxf_from_cad(
                             outdir / "cad", template=template, outdir=dxf_outdir,
                             name=root.name)
-                        print(f"DXF 2018：{result['output']}（{result['n_images']} 张）")
+                        print(f"DXF 2018：{result['output']}（{result['n_images']} 张，wire {result['n_wires']} 根）")
                     except (OSError, ValueError, RuntimeError) as exc:
                         print(f"DXF 导出失败：{exc}")
                         dxf_exit = 1
