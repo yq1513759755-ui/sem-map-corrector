@@ -193,3 +193,54 @@ def test_dxf_without_ezdxf_reports_friendly_error(tmp_path,monkeypatch,capsys):
     assert 'ezdxf' in out
     assert 'Traceback' not in out
 
+
+
+def test_design_coordinates_outside_canvas_are_rejected(tmp_path):
+    """--design 的值是输出像素坐标；传版图 µm 坐标会整幅越界。
+
+    旧行为：静默产出一张近乎全黑的校正图，报告却只写 WARN_REVIEW。
+    """
+    root=tmp_path/'input';scene(root)
+    design=tmp_path/'design_um.json'
+    design.write_text(json.dumps({'M1':[700,1950],'M2':[750,1950],
+                                  'M3':[700,2000],'M4':[750,2000]}))
+    assert main(['--batch',str(root),'--no-cad',
+                 '--design',str(design)])==1
+    assert not (root/'corrected/0303-11-01_corrected.tif').exists()
+
+
+def test_design_inside_canvas_still_works(tmp_path):
+    root=tmp_path/'input';scene(root)
+    design=tmp_path/'design_px.json'
+    design.write_text(json.dumps({'M1':[100,100],'M2':[300,100],
+                                  'M3':[100,300],'M4':[300,300]}))
+    assert main(['--batch',str(root),'--no-cad',
+                 '--design',str(design)])==0
+    report=json.loads((root/'corrected/diagnostics/0303-11-01_report.json').read_text())
+    assert report['quality_status']=='PASS'
+
+
+@pytest.mark.parametrize('changed',[
+    ['--affine'],['--mark-arm','10'],['--keep-info-bar']])
+def test_incremental_does_not_reuse_report_from_different_params(tmp_path,changed):
+    """换运行参数后必须重新校正，不能沿用旧 PASS 报告。
+
+    旧行为：只看原图哈希，于是 --affine 之后报告仍写 exact-square。
+    """
+    root=tmp_path/'input';scene(root)
+    assert main(['--batch',str(root),'--no-cad'])==0
+    report_path=root/'corrected/diagnostics/0303-11-01_report.json'
+    first=json.loads(report_path.read_text())
+    assert main(['--batch',str(root),'--no-cad',*changed])==0
+    second=json.loads(report_path.read_text())
+    assert first['run_params']!=second['run_params']
+
+
+def test_incremental_reuses_when_params_match(tmp_path,monkeypatch):
+    root=tmp_path/'input';scene(root)
+    assert main(['--batch',str(root),'--no-cad'])==0
+    from semcorr import pipeline
+    def boom(*a,**k):
+        raise AssertionError('should not re-correct identical params')
+    monkeypatch.setattr(pipeline,'correct_image',boom)
+    assert main(['--batch',str(root),'--no-cad'])==0

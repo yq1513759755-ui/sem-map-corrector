@@ -144,6 +144,52 @@ class GridAssignmentTests(unittest.TestCase):
         ordered = mdc.assign_grid(cands, N_ROWS, N_COLS)
         np.testing.assert_allclose(np.asarray(ordered), truth, atol=1e-9)
 
+    def _rotated(self, n_rows, n_cols, deg):
+        base = np.array([[c * 50.0, r * 50.0]
+                         for r in range(n_rows) for c in range(n_cols)])
+        th = math.radians(deg)
+        rot = np.array([[math.cos(th), -math.sin(th)],
+                        [math.sin(th), math.cos(th)]])
+        return base @ rot.T + np.array([400.0, 400.0])
+
+    def test_assign_grid_survives_in_plane_rotation(self):
+        """旧实现按 y 间隙切行，2x3 约 20°、2x6 约 10° 就会崩并误报残缺。"""
+        for n_rows, n_cols in ((2, 3), (2, 4), (2, 6), (3, 4)):
+            for deg in (0.0, 10.0, 20.0, 30.0, 45.0, 60.0):
+                with self.subTest(grid="%dx%d" % (n_rows, n_cols), deg=deg):
+                    truth = self._rotated(n_rows, n_cols, deg)
+                    cands = [{"rx": p[0], "ry": p[1], "combined": 1.0}
+                             for p in truth]
+                    ordered = mdc.assign_grid(cands, n_rows, n_cols)
+                    np.testing.assert_allclose(np.asarray(ordered), truth,
+                                               atol=1e-9)
+
+    def test_assign_grid_square_grid_tolerates_small_rotation(self):
+        """正方形网格对 90° 旋转对称，45° 附近指派本就不唯一；实际 SEM
+        旋转在 20° 以内，这一区间必须稳定。"""
+        rng = np.random.default_rng(7)
+        for n_rows, n_cols in ((2, 2), (3, 3)):
+            for deg in (0.0, 1.0, 3.0, 5.0, 10.0, 15.0, 20.0):
+                with self.subTest(grid="%dx%d" % (n_rows, n_cols), deg=deg):
+                    truth = self._rotated(n_rows, n_cols, deg)
+                    for _ in range(10):
+                        noisy = truth + rng.normal(0.0, 0.3, truth.shape)
+                        cands = [{"rx": p[0], "ry": p[1], "combined": 1.0}
+                                 for p in noisy]
+                        ordered = mdc.assign_grid(cands, n_rows, n_cols)
+                        np.testing.assert_allclose(np.asarray(ordered), noisy,
+                                                   atol=1e-9)
+
+    def test_assign_grid_rejects_single_row_or_column(self):
+        """1xN / Nx1 无法建立二维模型，必须明确拒绝而不是给出错误指派。"""
+        from semcorr.pipeline import process_single
+        args = argparse.Namespace(image="unused", design=None, grid="1x3",
+                                  outdir=None, affine=False, mark_arm=None,
+                                  keep_info_bar=False)
+        with self.assertRaises(RuntimeError) as ctx:
+            process_single("unused", args, verbose=False)
+        self.assertIn("2 行 2 列", str(ctx.exception))
+
 
 class SimilarityTests(unittest.TestCase):
     """fit_similarity（Umeyama）：2x2 等无冗余网格的几何指派校验基础。"""

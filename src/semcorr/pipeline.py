@@ -24,6 +24,7 @@ from .io import load_design, load_gray, sha256_file, write_image
 from .infobar import detect_info_bar, strip_info_bar
 from .quality import leave_one_out, self_check
 from .reporting import (
+    MARK_ARM_DEFAULT,
     draw_center_marks,
     print_outputs,
     write_corrected_centers_csv,
@@ -36,6 +37,22 @@ from .warp import warp_exact_square
 from . import __version__ as TOOL_VERSION
 
 GRID_FIT_MAX_RMS = 5.0
+
+
+def run_params(*, grid, affine, design_sha256, mark_arm, keep_info_bar):
+    """影响报告/产物的运行参数指纹。
+
+    增量重跑只复用参数指纹完全一致的 PASS 报告：否则换了 ``--affine`` /
+    ``--grid`` / ``--mark-arm`` 后会静默沿用旧结果，报告内容与本次命令行不符。
+    """
+    rows, cols = [int(v) for v in str(grid).lower().split("x")]
+    return {
+        "grid": [rows, cols],
+        "affine": bool(affine),
+        "design_sha256": design_sha256,
+        "mark_arm": MARK_ARM_DEFAULT if mark_arm is None else int(mark_arm),
+        "keep_info_bar": bool(keep_info_bar),
+    }
 
 
 def _nearby_rejected(rejected, predicted, radius):
@@ -162,6 +179,10 @@ def process_single(image_path, args, outdir=None, verbose=True):
     """单张图像完整流程；失败时抛出 RuntimeError。
     verbose=False 时静默运行（库/批量调用），完整结果看返回的 report。"""
     n_rows, n_cols = [int(v) for v in args.grid.lower().split("x")]
+    if n_rows < 2 or n_cols < 2:
+        raise RuntimeError(
+            "--grid 至少需要 2 行 2 列（例如 2x2、2x3）："
+            "单行或单列无法建立二维校正模型")
     outdir = outdir or args.outdir or os.path.dirname(os.path.abspath(image_path))
     os.makedirs(outdir, exist_ok=True)
     base = os.path.splitext(os.path.basename(image_path))[0]
@@ -218,8 +239,22 @@ def process_single(image_path, args, outdir=None, verbose=True):
 
     # ---------- 2) 理想坐标 ----------
     pitch = None
+    design_sha = None
     if args.design:
         ideal = load_design(args.design, names)
+        design_sha = sha256_file(args.design)
+        # --design 的值被直接当作**输出像素坐标**使用。若落在画面外，校正
+        # 映射会整幅采样到源图之外，静默产出一张全黑 TIFF，所以直接拒绝。
+        w_out, h_out = int(gray.shape[1]), int(gray.shape[0])
+        outside = [(nm, pt) for nm, pt in zip(names, ideal)
+                   if not (0.0 <= pt[0] < w_out and 0.0 <= pt[1] < h_out)]
+        if outside:
+            raise RuntimeError(
+                "设计坐标超出输出画面 %dx%d px：%s。--design 的值是输出像素坐标，"
+                "不是版图 µm 坐标；CAD 贴图请改用文件名区域编号 + --cad。"
+                % (w_out, h_out,
+                   "、".join("%s=(%.1f, %.1f)" % (nm, pt[0], pt[1])
+                            for nm, pt in outside[:4])))
         ideal_source = "用户提供的设计坐标"
     else:
         ideal, (pitch, dx_med, dy_med) = build_ideal_grid(ordered, n_rows, n_cols)
@@ -499,6 +534,13 @@ def process_single(image_path, args, outdir=None, verbose=True):
         "quality_warnings": quality_warnings,
         "method": method,
         "grid": [n_rows, n_cols],
+        "run_params": run_params(
+            grid=args.grid,
+            affine=args.affine,
+            design_sha256=design_sha,
+            mark_arm=getattr(args, "mark_arm", None),
+            keep_info_bar=getattr(args, "keep_info_bar", False),
+        ),
         "detector": detector_diag,
         "info_bar": info_bar,
         "ideal_source": ideal_source,

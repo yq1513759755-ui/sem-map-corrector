@@ -168,11 +168,23 @@ def main(argv=None):
                         failures.append((path.name, f"无法读取原图：{exc}"))
                         print(f"失败：无法读取原图：{exc}")
                         continue
-                    hit = find_passing_report(outdir, path.stem, digest)
+                    from .pipeline import run_params
+
+                    try:
+                        design_sha = sha256_file(args.design) if args.design else None
+                    except OSError:
+                        design_sha = None
+                    hit = find_passing_report(
+                        outdir, path.stem, digest,
+                        expected_params=run_params(
+                            grid=args.grid, affine=args.affine,
+                            design_sha256=design_sha,
+                            mark_arm=args.mark_arm,
+                            keep_info_bar=args.keep_info_bar))
                     if hit is not None:
                         report, report_path, corrected = hit
                         reused.append((path.name, report_path.name))
-                        print(f"跳过：哈希一致，沿用 PASS（{report_path.name}）")
+                        print(f"跳过：哈希与运行参数一致，沿用 PASS（{report_path.name}）")
                         continue
                 try:
                     report = correct_image(path, grid=args.grid, design=args.design,

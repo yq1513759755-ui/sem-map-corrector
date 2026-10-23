@@ -68,12 +68,17 @@ def sha256_file(path: str | os.PathLike[str]) -> str:
     return digest.hexdigest()
 
 
-def find_passing_report(corrected_dir, stem, input_sha256):
+def find_passing_report(corrected_dir, stem, input_sha256, expected_params=None):
     """Return (report, report_path, corrected_image) for a reusable PASS result.
 
     Prefers ``diagnostics/<stem>_report.json``; a renamed raw file can still
     reconnect through the unique matching ``input_sha256``. Requires PASS plus
     the on-disk corrected image — never a bare report.
+
+    ``expected_params`` is the run-parameter fingerprint (grid / affine /
+    design hash / mark arm / info-bar). A report produced with different
+    parameters is not reusable: reusing it would silently report the old
+    settings. Reports without the field (pre-0.6.1) are treated as a mismatch.
     """
     corrected_dir = Path(corrected_dir)
     diag = corrected_dir / "diagnostics"
@@ -94,14 +99,18 @@ def find_passing_report(corrected_dir, stem, input_sha256):
             continue
         if report.get("input_sha256") != input_sha256:
             continue
+        # Skip, do not bail out: another candidate may still be a valid PASS.
         if report.get("quality_status") != "PASS":
-            return None
+            continue
+        if expected_params is not None \
+                and report.get("run_params") != expected_params:
+            continue
         base = report_path.name[: -len("_report.json")]
         image = corrected_dir / f"{base}_corrected.tif"
         if image.is_file():
             hits.append((report, report_path, image))
-        if report_path == direct:
-            return (report, report_path, image) if image.is_file() else None
+            if report_path == direct:
+                return hits[-1]
     return hits[0] if len(hits) == 1 else None
 
 
