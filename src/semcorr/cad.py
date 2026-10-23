@@ -108,15 +108,23 @@ def prepare_image(raw,corrected_dir,pitch_um,max_residual_um,
         # Renaming a raw image does not invalidate its correction. Reconnect by
         # file content, never by a guessed coordinate prefix or similar name.
         matches=[]
-        for candidate in (corrected_dir/'diagnostics').glob('*_report.json'):
-            record=json.loads(candidate.read_text(encoding='utf-8'))
+        for candidate in sorted((corrected_dir/'diagnostics').glob('*_report.json')):
+            # A single truncated/unreadable report must not abort reconnect for
+            # every other image — same guard as io.find_passing_report.
+            try:
+                record=json.loads(candidate.read_text(encoding='utf-8'))
+            except (OSError,json.JSONDecodeError):
+                continue
             image=corrected_dir/(candidate.name[:-len('_report.json')]+'_corrected.tif')
             if record.get('input_sha256')==raw_hash and image.is_file():
                 matches.append((candidate,image))
         if len(matches)!=1:
             raise ValueError('缺少唯一且成功的校正图或报告，请先完成校正')
         rp,ip=matches[0]
-    r=json.loads(rp.read_text(encoding='utf-8'))
+    try:
+        r=json.loads(rp.read_text(encoding='utf-8'))
+    except (OSError,json.JSONDecodeError) as exc:
+        raise ValueError('校正报告无法解析: %s'%rp) from exc
     if r.get('quality_status')!='PASS' or r.get('grid')!=[2,2]:
         raise ValueError('仅导出 PASS 的 2x2 校正结果')
     if r.get('input_sha256')!=raw_hash:
@@ -170,7 +178,11 @@ def prepare_image(raw,corrected_dir,pitch_um,max_residual_um,
     except (ValueError, OSError, RuntimeError) as exc:
         wire_note = str(exc)
     image_hash=sha256_file(ip)
-    identity=hashlib.sha256((raw.stem+image_hash+json.dumps(anchor.tolist())).encode()).hexdigest()[:12]
+    # The bundle id must be STABLE across re-corrections: the AutoLISP side
+    # dedupes placed IMAGEs by basename (cad_runtime.lsp:semmap-same-file), so
+    # keying it on the corrected image hash would insert a second overlapping
+    # image after a --force rerun. Derive it from the raw stem + anchor instead.
+    identity=hashlib.sha256((raw.stem+json.dumps(anchor.tolist())).encode()).hexdigest()[:12]
     return dict(name=raw.stem,id='SEM_'+identity,anchor_um=anchor.tolist(),anchor_source=source,region=region,
                 pitch_um=pitch_um,image=str(ip.resolve()),report=str(rp.resolve()),
                 raw_sha256=r['input_sha256'],corrected_sha256=image_hash,
@@ -210,9 +222,19 @@ def export_batch(folder,*,outdir=None,pitch_um=50.,max_residual_um=.05,
             rows.append(prepare_image(raw,corrected_dir,pitch_um,max_residual_um,
                                       wire_width_um=wire_width_um,
                                       wire_extend_um=wire_extend_um))
-        except (ValueError,KeyError,TypeError,OSError) as exc:
+        except (ValueError,KeyError,TypeError,OSError,cv2.error) as exc:
             skipped.append(dict(name=raw.name,reason=str(exc)))
     outdir.mkdir(parents=True,exist_ok=True);(outdir/'images').mkdir(exist_ok=True)
+    # Drop bundle images left over from earlier batches: the manifest only
+    # lists this run's rows, so stale TIFFs would otherwise accumulate forever
+    # (one per content hash) and cannot be told apart from live references.
+    keep={row['id'] for row in rows}
+    for stale in (outdir/'images').glob('SEM_*.tif'):
+        if stale.stem not in keep:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
     for row in rows:
         row['bundle_image']='images/'+row['id']+'.tif'
         dest=outdir/row['bundle_image'];shutil.copy2(row['image'],dest)

@@ -28,6 +28,15 @@
   改 `--affine`、`--grid`、`--mark-arm` 后会静默沿用旧结果，报告内容与本次命令行不符。
 - **修复增量复用的提前返回**：`find_passing_report` 遇到同哈希的非 PASS 报告时改为跳过
   继续查找，不再让一份 WARN 报告永久阻断有效 PASS 的复用。
+- **CAD 报告扫描容忍损坏文件**：`cad.prepare_image` 遍历 `diagnostics/*_report.json` 时
+  捕获 `JSONDecodeError`。此前一份截断报告会让**所有**依赖哈希重连的改名图像一起失败。
+- **贴图包图像 id 与内容解耦**：`id` 改由原图文件名 + 锚点派生，不再包含校正图内容哈希。
+  此前重新校正会改变 id，而 AutoLISP 侧按 basename 去重，导致同一区域**重复插入** IMAGE。
+- **清理过期贴图包图像**：`export_batch` 写入前删除不在本批次 manifest 内的
+  `cad/images/SEM_*.tif`，避免改名/重算后文件无限累积。
+- **AutoLISP 错误处理与批量容错**：恢复调用方的 `*error*` 处理器（此前永久覆盖）；用
+  `UNDO _Begin/_End` 包住整批并在异常中止时关闭 undo 组；单张失败不再中止整批，
+  改为记录未贴入的图名并在结尾汇总。
 
 ## 0.6.0
 

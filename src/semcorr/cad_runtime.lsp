@@ -7,6 +7,12 @@
 (defun semmap-near (a b tolerance)
   (and a b (equal a b tolerance)))
 
+(defun semmap-join (items / out)
+  (setq out "")
+  (foreach item (reverse items)
+    (setq out (if (= out "") item (strcat item ", " out))))
+  out)
+
 (defun semmap-ensure-photo-layer ()
   (if (not (tblsearch "LAYER" "photo"))
     (command "_.-LAYER" "_Make" "photo" "")))
@@ -79,10 +85,16 @@
     (setq i (1+ i)))
   found)
 
-(defun semmap-run (rows / *error* saved total good selected failed)
+(defun semmap-run (rows / *error* saved prev-error undo-open total good selected failed)
   (setq saved (mapcar '(lambda (name) (cons name (getvar name))) '("FILEDIA" "OSMODE" "CMDECHO")))
+  ; Keep the caller's *error* handler: overwriting it permanently would leave
+  ; every later command in this drawing using ours.
+  (setq prev-error *error*)
   (defun *error* (message)
+    ; An abort mid-batch must not leave the UNDO group open.
+    (if undo-open (progn (command "_.UNDO" "_End") (setq undo-open nil)))
     (semmap-restore saved)
+    (if prev-error (setq *error* prev-error))
     (princ (strcat "\nSEMMAP stopped: " message ". Drawing not saved.")) (princ))
   (cond
     ((/= (getvar "TILEMODE") 1) (princ "\nSwitch to Model space first."))
@@ -96,13 +108,25 @@
         (progn
           (setvar "FILEDIA" 0) (setvar "OSMODE" 0) (setvar "CMDECHO" 0)
           (semmap-ensure-photo-layer)
-          (setq total (length rows) good 0 failed nil)
+          (setq total (length rows) good 0 failed nil undo-open T)
+          ; Group the whole batch so a mid-run failure can be undone as one step.
+          (command "_.UNDO" "_Begin")
           (foreach row rows
-            (if (not failed)
-              (if (semmap-place row) (setq good (1+ good)) (setq failed T))))
+            ; One bad image must not abandon the rest of the batch: record it
+            ; and keep placing (the Python side also keeps good images usable).
+            (if (semmap-place row)
+              (setq good (1+ good))
+              (setq failed (cons (car row) failed))))
+          (command "_.UNDO" "_End")
+          (setq undo-open nil)
           (semmap-restore saved)
+          (if prev-error (setq *error* prev-error))
           (command "_.REGEN")
-          (princ (strcat "\nSEMMAP: " (itoa good) "/" (itoa total) " verified; layer photo only; 1 drawing unit = 1 um. Drawing not saved.")))
+          (if failed
+            (princ (strcat "\nSEMMAP: " (itoa good) "/" (itoa total)
+                           " verified; NOT placed: " (semmap-join failed)
+                           "; layer photo only; 1 drawing unit = 1 um. Drawing not saved."))
+            (princ (strcat "\nSEMMAP: " (itoa good) "/" (itoa total) " verified; layer photo only; 1 drawing unit = 1 um. Drawing not saved."))))
         (princ "\nBundle images not found; nothing placed."))))
   (princ))
 

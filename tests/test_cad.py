@@ -200,3 +200,41 @@ def test_multiple_acquisitions_remain_distinct(batch):
     assert len(r['images'])==2
     assert r['images'][0]['anchor_um']==r['images'][1]['anchor_um']
     assert r['images'][0]['id']!=r['images'][1]['id']
+
+
+def test_truncated_report_does_not_break_hash_reconnect(batch):
+    """一份损坏的报告不能让所有改名图像的重连一起失败。"""
+    folder,raw,rp=batch
+    (rp.parent/'aaa_report.json').write_text('{"input_sha256": "x", "qual',
+                                              encoding='utf-8')
+    renamed=raw.with_name('0101-22-01.tif')
+    raw.rename(renamed)
+    row=prepare_image(renamed,folder/'corrected',50.,0.05)
+    assert row['anchor_um']==[0.,150.]
+
+
+def test_bundle_id_stable_across_re_correction(batch):
+    """bundle id 必须与校正图内容无关：LISP 按 basename 去重，
+    若 id 随重算后的图像哈希变化，重跑会重复插入同一张图。"""
+    folder,raw,rp=batch
+    first=export_batch(folder)
+    id1=first['images'][0]['id']
+    # Simulate a re-correction that produces a different corrected image.
+    img=cv2.imread(str(folder/'corrected'/'0101-13-01_corrected.tif'))
+    img[:50,:50]=(0,0,0)
+    cv2.imwrite(str(folder/'corrected'/'0101-13-01_corrected.tif'),img)
+    second=export_batch(folder)
+    assert second['images'][0]['id']==id1
+    assert second['images'][0]['corrected_sha256']!=first['images'][0]['corrected_sha256']
+
+
+def test_stale_bundle_images_are_removed(batch):
+    """改名/重算后旧 bundle 图像不应无限累积。"""
+    folder,raw,rp=batch
+    export_batch(folder)
+    images=folder/'corrected/cad/images'
+    (images/'SEM_staleold.tif').write_bytes(b'stale')
+    export_batch(folder)
+    names=sorted(p.name for p in images.glob('SEM_*.tif'))
+    assert 'SEM_staleold.tif' not in names
+    assert len(names)==1
